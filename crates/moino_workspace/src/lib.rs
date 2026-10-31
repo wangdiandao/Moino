@@ -129,6 +129,7 @@ impl PrototypeWorkspace {
         }
         self.previous_focus = window.focused(cx);
         self.menu_visible = true;
+        window.focus(&self.menu_focus, cx);
         let focus = self.menu_focus.clone();
         let owner = cx.entity().downgrade();
         window.on_next_frame(move |window, cx| {
@@ -259,7 +260,7 @@ mod tests {
     // Spec: docs/acceptance/m0.md#技术原型
     fn menu_overlay_does_not_move_document(cx: &mut TestAppContext) {
         cx.update(init);
-        let (handle, _) = cx.update(|cx| {
+        let (handle, workspace) = cx.update(|cx| {
             gpui_kit::open_window(Default::default(), cx, |window, cx| {
                 cx.new(|cx| PrototypeWorkspace::new(window, cx))
             })
@@ -273,6 +274,11 @@ mod tests {
             .expect("initial geometry");
         cx.update_window(handle, |_, window, cx| {
             window.press("f10", cx);
+            if moino_platform::has_window_menu() {
+                let text = workspace.read(cx).editor.read(cx).text().to_owned();
+                window.press("enter", cx);
+                assert_eq!(workspace.read(cx).editor.read(cx).text(), text);
+            }
             window.simulate_next_frame(cx);
             window.render_frame(cx);
             assert_eq!(window.find("live-editor").bounds(), before);
