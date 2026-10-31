@@ -42,11 +42,13 @@ fn init(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("f10", ToggleMenu, None),
         KeyBinding::new("escape", DismissMenu, Some("MoinoWorkspace")),
+        KeyBinding::new("escape", DismissMenu, Some("AppMenuBar")),
         KeyBinding::new(moino_platform::quit_shortcut(), Quit, None),
     ]);
-    cx.set_menus(vec![
-        Menu::new("文件").items([MenuItem::action("退出", Quit)]),
-    ]);
+    let menus = || vec![Menu::new("文件").items([MenuItem::action("退出", Quit)])];
+    cx.set_menus(menus());
+    gpui_kit::component::GlobalState::global_mut(cx)
+        .set_app_menus(menus().into_iter().map(Menu::owned).collect());
     cx.on_action(|_: &Quit, cx| cx.quit());
 }
 
@@ -56,6 +58,8 @@ pub struct PrototypeWorkspace {
     dedicated: Entity<DedicatedProbe>,
     menu: Entity<AppMenuBar>,
     menu_visible: bool,
+    menu_focus: FocusHandle,
+    previous_focus: Option<FocusHandle>,
     math: Option<Arc<Image>>,
     diagram: Option<Arc<Image>>,
     preview: Option<Arc<Image>>,
@@ -110,6 +114,8 @@ impl PrototypeWorkspace {
             dedicated,
             menu,
             menu_visible: false,
+            menu_focus: cx.focus_handle(),
+            previous_focus: None,
             math: None,
             diagram: None,
             preview: None,
@@ -117,13 +123,37 @@ impl PrototypeWorkspace {
             _render: render,
         }
     }
-    fn toggle_menu(&mut self, _: &ToggleMenu, _: &mut Window, cx: &mut Context<Self>) {
-        self.menu_visible = !self.menu_visible;
+    fn show_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu_visible || !moino_platform::has_window_menu() {
+            return;
+        }
+        self.previous_focus = window.focused(cx);
+        self.menu_visible = true;
+        let focus = self.menu_focus.clone();
+        let owner = cx.entity().downgrade();
+        window.on_next_frame(move |window, cx| {
+            if let Some(view) = owner.upgrade()
+                && view.read(cx).menu_visible
+            {
+                window.focus(&focus, cx);
+                window.focus_next(cx);
+            }
+        });
         cx.notify();
+    }
+    fn toggle_menu(&mut self, _: &ToggleMenu, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu_visible {
+            self.dismiss_menu(&DismissMenu, window, cx);
+        } else {
+            self.show_menu(window, cx);
+        }
     }
     fn dismiss_menu(&mut self, _: &DismissMenu, window: &mut Window, cx: &mut Context<Self>) {
         self.menu_visible = false;
-        let focus = self.editor.read(cx).focus_handle();
+        let focus = self
+            .previous_focus
+            .take()
+            .unwrap_or_else(|| self.editor.read(cx).focus_handle());
         window.focus(&focus, cx);
         cx.notify();
     }
@@ -140,12 +170,13 @@ impl Render for PrototypeWorkspace {
             .text_color(cx.theme().foreground)
             .on_action(cx.listener(Self::toggle_menu))
             .on_action(cx.listener(Self::dismiss_menu))
-            .on_modifiers_changed(cx.listener(|this, event: &ModifiersChangedEvent, _, cx| {
-                if event.modifiers.alt && moino_platform::has_window_menu() {
-                    this.menu_visible = true;
-                    cx.notify();
-                }
-            }))
+            .on_modifiers_changed(
+                cx.listener(|this, event: &ModifiersChangedEvent, window, cx| {
+                    if event.modifiers.alt && moino_platform::has_window_menu() {
+                        this.show_menu(window, cx);
+                    }
+                }),
+            )
             .child(
                 div()
                     .id("content-viewport")
@@ -205,6 +236,7 @@ impl Render for PrototypeWorkspace {
                         div()
                             .id("menu-overlay")
                             .test_support()
+                            .track_focus(&self.menu_focus)
                             .absolute()
                             .top_0()
                             .left_0()
@@ -233,11 +265,32 @@ mod tests {
             })
             .expect("window")
         });
+        let before = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.find("live-editor").bounds()
+            })
+            .expect("initial geometry");
+        cx.update_window(handle, |_, window, cx| {
+            window.press("f10", cx);
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+            assert_eq!(window.find("live-editor").bounds(), before);
+            if moino_platform::has_window_menu() {
+                assert_eq!(window.find("menu").focused(), Some(true));
+                window.press("enter", cx);
+                assert!(window.try_find("popup-menu").is_some());
+                window.press("down", cx);
+                window.press("escape", cx);
+                assert!(window.try_find("menu-overlay").is_some());
+            }
+        })
+        .expect("menu navigation");
+        cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            let before = window.find("live-editor").bounds();
-            window.press("f10", cx);
-            assert_eq!(window.find("live-editor").bounds(), before);
+            assert!(window.try_find("popup-menu").is_none());
+            assert_eq!(window.find("menu").focused(), Some(true));
             window.press("escape", cx);
             assert!(window.try_find("menu-overlay").is_none());
             assert_eq!(window.find("live-editor").bounds(), before);
