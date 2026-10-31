@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 
 use std::{fmt, ops::Range};
-use unicode_segmentation::UnicodeSegmentation;
+use unicode_segmentation::{GraphemeCursor, GraphemeIncomplete, UnicodeSegmentation};
 
 macro_rules! offset {
     ($name:ident, $doc:literal) => {
@@ -137,26 +137,42 @@ impl TextBuffer {
     }
     /// Finds the preceding extended grapheme boundary (or the start).
     pub fn previous_grapheme(&self, offset: ScalarOffset) -> Result<ScalarOffset, OffsetError> {
-        let byte = self.to_byte(offset)?.0;
-        let text = self.to_string();
-        let previous = text
-            .grapheme_indices(true)
-            .map(|(i, _)| i)
-            .take_while(|i| *i < byte)
-            .last()
-            .unwrap_or(0);
-        self.byte_to_scalar(ByteOffset(previous))
+        self.grapheme_boundary(offset, false)
     }
     /// Finds the following extended grapheme boundary (or the end).
     pub fn next_grapheme(&self, offset: ScalarOffset) -> Result<ScalarOffset, OffsetError> {
+        self.grapheme_boundary(offset, true)
+    }
+    fn grapheme_boundary(
+        &self,
+        offset: ScalarOffset,
+        forward: bool,
+    ) -> Result<ScalarOffset, OffsetError> {
         let byte = self.to_byte(offset)?.0;
-        let text = self.to_string();
-        let next = text
-            .grapheme_indices(true)
-            .map(|(i, _)| i)
-            .find(|i| *i > byte)
-            .unwrap_or(text.len());
-        self.byte_to_scalar(ByteOffset(next))
+        let mut cursor = GraphemeCursor::new(byte, self.rope.len(), true);
+        let (mut chunk, mut start) = self.rope.chunk(byte);
+        loop {
+            let result = if forward {
+                cursor.next_boundary(chunk, start)
+            } else {
+                cursor.prev_boundary(chunk, start)
+            };
+            match result {
+                Ok(Some(boundary)) => return self.byte_to_scalar(ByteOffset(boundary)),
+                Ok(None) => return Ok(if forward { self.len() } else { ScalarOffset(0) }),
+                Err(GraphemeIncomplete::NextChunk) => {
+                    (chunk, start) = self.rope.chunk(start + chunk.len());
+                }
+                Err(GraphemeIncomplete::PrevChunk) => {
+                    (chunk, start) = self.rope.chunk(start - 1);
+                }
+                Err(GraphemeIncomplete::PreContext(end)) => {
+                    let (context, context_start) = self.rope.chunk(end - 1);
+                    cursor.provide_context(&context[..end - context_start], context_start);
+                }
+                Err(GraphemeIncomplete::InvalidOffset) => return Err(OffsetError),
+            }
+        }
     }
     /// Returns UAX #29 word ranges containing letters or numbers.
     pub fn words(&self) -> Vec<Range<ScalarOffset>> {
@@ -218,6 +234,29 @@ mod tests {
         assert_eq!(OffsetError.code(), "text.invalid_offset");
         assert_eq!(OffsetError.message_key(), "error.text.invalid_offset");
         assert!(!OffsetError.is_retryable());
+    }
+    #[test]
+    // Spec: docs/modules/selection.md#逻辑选择
+    fn rope_chunks_match_contiguous_grapheme_boundaries() {
+        for source in [
+            "e\u{301}👨‍👩‍👧‍👦🇨🇳墨".repeat(300),
+            format!("a{}b", "\u{301}".repeat(6000)),
+            "🇨🇳".repeat(1500),
+            "".to_owned(),
+        ] {
+            let text = TextBuffer::new(&source);
+            let boundaries: Vec<_> = source
+                .grapheme_indices(true)
+                .map(|(byte, _)| text.byte_to_scalar(ByteOffset(byte)).expect("boundary"))
+                .chain([text.len()])
+                .collect();
+            for pair in boundaries.windows(2) {
+                assert_eq!(text.next_grapheme(pair[0]), Ok(pair[1]));
+                assert_eq!(text.previous_grapheme(pair[1]), Ok(pair[0]));
+            }
+            assert_eq!(text.next_grapheme(text.len()), Ok(text.len()));
+            assert_eq!(text.previous_grapheme(ScalarOffset(0)), Ok(ScalarOffset(0)));
+        }
     }
     proptest! {
         #[test]
