@@ -1,0 +1,45 @@
+# Selection acceptance vectors.
+
+- name: forward-selection
+  specs: [../../modules/selection.md#逻辑选择]
+  scenario: selection-direction
+  input: |
+    hello
+  action: select(0, 5)
+  expected: |
+    anchor=0 head=5 forward=true
+  description: >
+    前向选择 anchor<head
+
+- name: backward-selection
+  specs: [../../modules/selection.md#逻辑选择]
+  scenario: selection-direction
+  input: |
+    hello
+  action: select(5, 0)
+  expected: |
+    anchor=5 head=0 forward=false
+  description: >
+    后向选择 anchor>head
+
+- name: selection-maps-insert
+  specs: [../../modules/selection.md#逻辑选择]
+  scenario: marker-expansion
+  input: |
+    hello (cursor at 3)
+  action: insert(">> " at 0)
+  expected: |
+    cursor=6
+  description: >
+    插入后光标随偏移映射前移
+
+- name: offset-in-deleted-clamps
+  specs: [../../modules/selection.md#逻辑选择, ../../contracts/document-model.md#选择与映射]
+  scenario: marker-expansion
+  input: |
+    hello (select 1..4)
+  action: delete(1..4)
+  expected: |
+    anchor=1 head=1
+  description: >
+    被删区间内的偏移夹到删除起点

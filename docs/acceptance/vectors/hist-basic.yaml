@@ -1,0 +1,45 @@
+# Undo and redo acceptance vectors.
+
+- name: undo-restores
+  specs: [../../contracts/history.md#撤销单元]
+  scenario: input-history
+  input: |
+    hello█
+  action: insert:"!" then undo
+  expected: |
+    hello█
+  description: >
+    插入后撤销恢复原文本
+
+- name: redo-replays
+  specs: [../../contracts/history.md#撤销单元]
+  scenario: redo-history
+  input: |
+    a█
+  action: insert:"b", undo, redo
+  expected: |
+    ab█
+  description: >
+    撤销后重做恢复编辑
+
+- name: inputs-merge
+  specs: [../../contracts/history.md#撤销单元]
+  scenario: input-history
+  input: |
+    a█
+  action: insert:"b" (group=1), insert:"c" (group=1), undo
+  expected: |
+    a█
+  description: >
+    同组输入合并为一次撤销
+
+- name: new-edit-clears-redo
+  specs: [../../contracts/history.md#撤销单元]
+  scenario: redo-history
+  input: |
+    x█
+  action: insert:"y", undo, insert:"z", redo
+  expected: |
+    xz█
+  description: >
+    撤销后新编辑清空重做栈

@@ -1,0 +1,94 @@
+# Editing acceptance vectors.
+#
+# Cursor: █ marks the insertion point.
+
+- name: enter-splits-paragraph
+  specs: [../../modules/editing.md#enter]
+  scenario: enter-splits-paragraph
+  input: |
+    Hello world█
+  action: enter
+  expected: |
+    Hello world
+    █
+  description: >
+    段落末尾 Enter 在下方新建段落
+
+- name: enter-exits-heading
+  specs: [../../modules/editing.md#enter]
+  scenario: enter-exits-heading
+  input: |
+    # Hello█
+  action: enter
+  expected: |
+    # Hello
+    █
+  description: >
+    标题末尾 Enter 退出为同级段落
+
+- name: backspace-merges-blocks
+  specs: [../../modules/editing.md#backspace-与-delete]
+  scenario: backspace-merges-blocks
+  input: |
+    para
+    █text
+  action: backspace
+  expected: |
+    para█text
+  description: >
+    块起点 Backspace 并入前一块
+
+- name: backspace-at-heading-marker
+  specs: [../../modules/editing.md#backspace-与-delete]
+  scenario: backspace-merges-blocks
+  input: |
+    # █text
+  action: backspace
+  expected: |
+    █text
+  description: >
+    标题标记后 Backspace 先删标记转段落
+
+- name: toggle-bold-wraps
+  specs: [../../modules/editing.md#格式命令]
+  scenario: formatting-toggle
+  input: |
+    a ｢b｣ c
+  action: inline.bold
+  expected: |
+    a **b** c
+  description: >
+    选区执行 bold 命令包围为粗体
+
+- name: toggle-bold-unwraps
+  specs: [../../modules/editing.md#格式命令]
+  scenario: formatting-toggle
+  input: |
+    a **｢b｣** c
+  action: inline.bold
+  expected: |
+    a b c
+  description: >
+    已粗体选区再次执行去除标记
+
+- name: insert-replaces-selection
+  specs: [../../modules/editing.md#输入路由]
+  scenario: enter-splits-paragraph
+  input: |
+    a ｢bc｣ d
+  action: insert:"X"
+  expected: |
+    a X█ d
+  description: >
+    有选区输入先删选区再插入
+
+- name: transform-to-heading
+  specs: [../../modules/editing.md#格式命令]
+  scenario: formatting-toggle
+  input: |
+    text█
+  action: block.heading1
+  expected: |
+    # text█
+  description: >
+    block.heading1 把段落转为一级标题

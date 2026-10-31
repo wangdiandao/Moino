@@ -1,0 +1,119 @@
+# Markdown parsing acceptance vectors.
+#
+# Cursor: █ marks the insertion point. Expected is a simplified CST dump.
+
+- name: paragraph
+  specs: [../../contracts/markdown-dialect.md#基础方言与扩展, ../../contracts/markdown-dialect.md#cst-与标记区间]
+  scenario: basic-block-parsing
+  input: |
+    Hello world
+  expected: |
+    Paragraph["Hello world"]
+  description: >
+    普通段落解析为段落块
+
+- name: atx-heading
+  specs: [../../contracts/markdown-dialect.md#基础方言与扩展, ../../contracts/markdown-dialect.md#锚点与引用]
+  scenario: basic-block-parsing
+  input: |
+    # Hello
+  expected: |
+    Heading(level=1, anchor="hello")["Hello"]
+  description: >
+    ATX 标题解析为带锚点的标题块
+
+- name: setext-heading
+  specs: [../../contracts/markdown-dialect.md#基础方言与扩展]
+  scenario: basic-block-parsing
+  input: |
+    Title
+    =====
+  expected: |
+    Heading(level=1)["Title"]
+  description: >
+    Setext 标题由等号行识别为一级标题
+
+- name: fenced-code
+  specs: [../../contracts/markdown-dialect.md#基础方言与扩展]
+  scenario: basic-block-parsing
+  input: |
+    ```rust
+    fn main() {}
+    ```
+  expected: |
+    Code(info="rust")["fn main() {}\n"]
+  description: >
+    围栏代码块保留信息串与代码文本
+
+- name: thematic-break
+  specs: [../../contracts/markdown-dialect.md#基础方言与扩展]
+  scenario: basic-block-parsing
+  input: |
+    a
+    ---
+    b
+  expected: |
+    Paragraph
+    ThematicBreak
+    Paragraph
+  description: >
+    --- 识别为主题分隔线（两行段落之间）
+
+- name: table
+  specs: [../../contracts/markdown-dialect.md#基础方言与扩展]
+  scenario: table-parsing
+  input: |
+    | a | b |
+    |---|---|
+    | 1 | 2 |
+  expected: |
+    Table(cols=2, rows=1)
+  description: >
+    GFM 表格解析出表头与一行数据
+
+- name: inline-strong
+  specs: [../../contracts/markdown-dialect.md#基础方言与扩展]
+  scenario: inline-parsing
+  input: |
+    a **b** c
+  expected: |
+    Paragraph[Text("a "), Strong, Text(" c")]
+  description: >
+    ** 标记解析为 strong 内联节点
+
+- name: math-block
+  specs: [../../contracts/markdown-dialect.md#基础方言与扩展, ../../contracts/markdown-dialect.md#块解析优先级]
+  scenario: extension-parsing
+  input: |
+    $$
+    x^2
+    $$
+  expected: |
+    MathBlock["x^2\n"]
+  description: >
+    $$ 块解析为数学块
+
+- name: front-matter
+  specs: [../../contracts/markdown-dialect.md#基础方言与扩展]
+  scenario: extension-parsing
+  input: |
+    ---
+    title: Hi
+    ---
+
+    body
+  expected: |
+    FrontMatter
+    Paragraph
+  description: >
+    文档元数据由 --- 开始 --- 结束
+
+- name: unclosed-code-as-text
+  specs: [../../contracts/markdown-dialect.md#cst-与标记区间]
+  scenario: inline-parsing
+  input: |
+    a `unclosed
+  expected: |
+    Paragraph[Text]
+  description: >
+    未闭合的行内代码按文本保留
