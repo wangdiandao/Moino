@@ -84,7 +84,7 @@ Moino 拥有文档身份、修订、历史、选择、焦点、无障碍、滚�
 | 数学 | `ratex-parser` / `ratex-layout` / `ratex-svg 0.1.15` | `moino_math` |
 | 图表 | `merman 0.9.2` | `moino_diagram` |
 | 代码高亮 | GPUI Kit `syntect` 特性 | `moino_editor` |
-| 分页导出 | `typst` / `typst-pdf` / `typst-render 0.15.1` | `moino_export` |
+| 分页导出 | `typst` / `typst-layout` / `typst-pdf` / `typst-render 0.15.1`；`typst-kit` 提供字体发现 | `moino_export` |
 | 文档格式 | `docx-rs 0.4.22`、`epub-builder 0.8.3`、`zip` | `moino_export`、`moino_io` |
 | PDF 预览 | `hayro 0.8.0` | `moino_preview` |
 | 拼写 | `spellbook 0.4.2` | `moino_spell` |

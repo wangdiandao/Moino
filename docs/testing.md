@@ -31,13 +31,13 @@
 | `cargo clippy --workspace --all-targets -- -D warnings` | 每个 PR 与 `main` | Windows、macOS、Linux |
 | `cargo test --workspace --locked` | 每个 PR 与 `main` | Windows、macOS、Linux |
 | `cargo deny check` | 每个 PR 与 `main` | Linux |
-| `cargo xtask layers`（规划中） | 每个 PR 与 `main` | Linux |
-| `cargo xtask docs`、`cargo xtask vectors`（规划中） | 修改 `docs/` 的 PR | Linux |
-| L0 覆盖率门槛（规划中） | 每个 PR 与 `main` | Linux |
+| `cargo xtask layers` | 每个 PR 与 `main` | 三平台 |
+| `cargo xtask docs`、`cargo xtask vectors`、`cargo xtask trace` | 每个 PR 与 `main` | 三平台 |
+| L0 覆盖率门槛 | 每个 PR 与 `main` | Linux |
 | 模糊测试与基准测试（规划中） | 每夜 | Linux |
 
 
-L0 行覆盖率不低于 80%，由 cargo llvm-cov 计算；其他 crate 只报告。CI 测试使用锁文件。规划中的 `cargo xtask trace` 生成章节与测试关联报告作为构建产物，不提交仓库，不代表实现完成。
+L0 行覆盖率不低于 80%，由 cargo llvm-cov 计算；其他 crate 只报告。CI 测试使用锁文件。`cargo xtask trace` 生成规格、场景与向量关联报告作为构建产物，不提交仓库；加载与链接校验不代表产品断言执行，状态明确为 `not-executed`。原型检查与产品向量执行的边界见[基础验证](acceptance/m0.md#自动检查)。
 
 ## 手动验证清单
 

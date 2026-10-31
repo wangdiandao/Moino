@@ -2,9 +2,9 @@
 
 ## 工具链与工作区
 
-目标工作区用 `rust-toolchain.toml` 固定 Rust 1.99.1，不低于依赖最低要求 1.95，包含 rustfmt、clippy；升级工具链单独提交。全部 crate 使用 edition 2024、resolver 3，提交 `Cargo.lock`。
+工作区用 `rust-toolchain.toml` 固定 Rust 1.99.1，不低于依赖最低要求 1.95，包含 rustfmt、clippy；升级工具链单独提交。全部 crate 使用 edition 2024、resolver 3，提交 `Cargo.lock`。
 
-依赖声明与引入流程见[开发流程](development.md#依赖与上游)。lint 在 `[workspace.lints]` 定义，成员声明 `[lints] workspace = true`；工作区格式为 rustfmt、`max_width = 100`，不手动对齐或关闭。文本编码见[文档写法](AGENTS.md#写法)，由规划中的 `.gitattributes`、`.editorconfig` 固定。
+依赖声明与引入流程见[开发流程](development.md#依赖与上游)。lint 在 `[workspace.lints]` 定义，成员声明 `[lints] workspace = true`；工作区格式为 rustfmt、`max_width = 100`，不手动对齐或关闭。文本编码见[文档写法](AGENTS.md#写法)，由 `.gitattributes`、`.editorconfig` 固定。
 
 ## 命名
 

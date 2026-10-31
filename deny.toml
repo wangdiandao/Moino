@@ -1,0 +1,27 @@
+[graph]
+targets = ["x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-unknown-linux-gnu"]
+
+[advisories]
+version = 2
+unmaintained = "workspace"
+ignore = [
+  { id = "RUSTSEC-2026-0194", reason = "M0 Typst probe only compiles trusted fixtures; PrototypeWorld denies CSL and bibliography file access. Review before enabling external bibliography input; tracked in M0." },
+  { id = "RUSTSEC-2026-0195", reason = "M0 Typst probe cannot read external CSL XML: PrototypeWorld denies all non-main files. Review before enabling external bibliography input; tracked in M0." },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+  "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib",
+  "Unicode-3.0", "Unicode-DFS-2016", "CC0-1.0", "0BSD", "MPL-2.0", "OFL-1.1",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

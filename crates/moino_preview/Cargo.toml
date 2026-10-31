@@ -1,0 +1,19 @@
+[package]
+name = "moino_preview"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+hayro.workspace = true
+image.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+anyhow.workspace = true
+moino_export.workspace = true
+
+[lints]
+workspace = true

@@ -2,6 +2,8 @@
 
 [场景矩阵](scenarios.md)链接行为判定，`vectors/*.yaml` 保存精确输入输出。数据格式在此定义，检查与执行方式见[测试策略](../testing.md)。
 
+工程与关键技术验证见[基础验证](m0.md)。
+
 ## 向量字段
 
 YAML 根为列表，示例直接看[段落 Enter 数据](vectors/edit-basic.yaml)，不再另存同格式的教学副本。

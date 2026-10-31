@@ -1,0 +1,20 @@
+[package]
+name = "moino_workspace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+moino_editor.workspace = true
+moino_platform.workspace = true
+moino_math.workspace = true
+moino_diagram.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+
+[lints]
+workspace = true
