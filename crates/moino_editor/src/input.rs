@@ -135,6 +135,7 @@ impl EntityInputHandler for PrototypeEditor {
             && byte_from_utf16(&self.text, range.end).is_some()
         {
             self.selection = range;
+            self.selection_reversed = false;
             self.changed(window, cx);
         }
     }
@@ -210,6 +211,15 @@ mod tests {
                 .expect("leaf geometry");
             assert!(caret.origin.x >= bounds.origin.x);
             assert!(caret.size.height > px(0.));
+            editor.update(cx, |editor, cx| {
+                editor.selection_reversed = true;
+                editor.set_selected_text_range(0..1, window, cx);
+                let selection = editor
+                    .selected_text_range(false, window, cx)
+                    .expect("native selection");
+                assert_eq!(selection.range, 0..1);
+                assert!(!selection.reversed);
+            });
         })
         .expect("window update");
     }

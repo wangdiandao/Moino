@@ -1,4 +1,4 @@
-use saphyr::{LoadableYamlNode, Yaml};
+use saphyr::{LoadableYamlNode, SafelyIndex, Yaml};
 use std::{
     collections::HashSet,
     fs,
@@ -94,11 +94,16 @@ pub fn parse_vectors(source: &str, path: &Path) -> Result<Vec<Vector>, VectorErr
                     return Err(invalid("unknown vector field"));
                 }
             }
-            let string = |key: &str| -> Result<String, VectorError> {
-                row[key]
-                    .as_str()
-                    .filter(|text| !text.is_empty())
+            let text = |key: &str| -> Result<String, VectorError> {
+                row.get(key)
+                    .and_then(|value| value.as_str())
                     .map(str::to_owned)
+                    .ok_or_else(|| invalid(format!("{key} must be a string")))
+            };
+            let string = |key: &str| -> Result<String, VectorError> {
+                text(key)
+                    .ok()
+                    .filter(|value| !value.is_empty())
                     .ok_or_else(|| invalid(format!("{key} must be a nonempty string")))
             };
             let name = string("name")?;
@@ -111,8 +116,9 @@ pub fn parse_vectors(source: &str, path: &Path) -> Result<Vec<Vector>, VectorErr
             {
                 return Err(invalid(format!("invalid or duplicate name: {name}")));
             }
-            let specs = row["specs"]
-                .as_sequence()
+            let specs = row
+                .get("specs")
+                .and_then(|value| value.as_sequence())
                 .filter(|list| !list.is_empty())
                 .ok_or_else(|| invalid("specs must be a nonempty sequence"))?
                 .iter()
@@ -132,9 +138,9 @@ pub fn parse_vectors(source: &str, path: &Path) -> Result<Vec<Vector>, VectorErr
                 name,
                 specs,
                 scenario: string("scenario")?,
-                input: string("input")?,
+                input: text("input")?,
                 action,
-                expected: string("expected")?,
+                expected: text("expected")?,
                 description: string("description")?,
                 source: path.to_owned(),
             })
@@ -179,6 +185,12 @@ mod tests {
         assert_eq!(rows[0].input(), "a  \n");
         assert_eq!(rows[0].expected(), "b\n");
         assert!(rows[0].action().is_none());
+        let empty = CASE
+            .replace("input: |\n    a  \n", "input: ''\n")
+            .replace("expected: |\n    b\n", "expected: ''\n");
+        let rows = parse_vectors(&empty, Path::new("empty.yaml")).expect("empty document case");
+        assert_eq!(rows[0].input(), "");
+        assert_eq!(rows[0].expected(), "");
     }
     #[test]
     // Spec: docs/acceptance/m0.md#自动检查
@@ -190,6 +202,12 @@ mod tests {
             CASE.replace("sample", "Bad_Name"),
             CASE.replace("specs:", "unknown:"),
             CASE.replace("description: 测试", "description: 1"),
+            CASE.replace("  input: |\n    a  \n", ""),
+            CASE.replace("name: sample\n  ", ""),
+            CASE.replace("  specs: [../../modules/editing.md#enter]\n", ""),
+            CASE.replace("  scenario: enter-splits-paragraph\n", ""),
+            CASE.replace("  expected: |\n    b\n", ""),
+            CASE.replace("  description: 测试\n", ""),
             format!("{CASE}---\n[]"),
         ] {
             assert!(
