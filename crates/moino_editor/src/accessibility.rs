@@ -9,6 +9,7 @@ pub(super) fn build_runs(
     builder: &mut A11ySubtreeBuilder,
     text: &str,
     selection: &Range<usize>,
+    reversed: bool,
     geometry: &LeafGeometry,
 ) -> HashMap<NodeId, Range<usize>> {
     let mut lines: Vec<Range<usize>> = Vec::new();
@@ -58,8 +59,20 @@ pub(super) fn build_runs(
                 None
             }
         };
-        anchor = anchor.or_else(|| position(selection.start));
-        focus = focus.or_else(|| position(selection.end));
+        anchor = anchor.or_else(|| {
+            position(if reversed {
+                selection.end
+            } else {
+                selection.start
+            })
+        });
+        focus = focus.or_else(|| {
+            position(if reversed {
+                selection.start
+            } else {
+                selection.end
+            })
+        });
         builder.push_child(id, node);
         runs.insert(id, range.clone());
     }
@@ -75,7 +88,7 @@ pub(super) fn native_selection(
     text: &str,
     selection: &TextSelection,
     runs: &HashMap<NodeId, Range<usize>>,
-) -> Option<Range<usize>> {
+) -> Option<(Range<usize>, bool)> {
     let offset = |position: TextPosition| {
         let range = runs.get(&position.node)?;
         let value = text.get(range.clone())?;
@@ -88,13 +101,14 @@ pub(super) fn native_selection(
     };
     let anchor = offset(selection.anchor)?;
     let focus = offset(selection.focus)?;
-    Some(anchor.min(focus)..anchor.max(focus))
+    Some((anchor.min(focus)..anchor.max(focus), anchor > focus))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn accessible_scalar_positions_convert_to_native_utf16_and_reject_unknown_runs() {
         let id = NodeId(1);
         let runs = HashMap::from([(id, 0.."中😀".len())]);
@@ -108,7 +122,18 @@ mod tests {
                 character_index: 2,
             },
         };
-        assert_eq!(native_selection("中😀", &selection, &runs), Some(1..3));
+        assert_eq!(
+            native_selection("中😀", &selection, &runs),
+            Some((1..3, false))
+        );
+        let backward = TextSelection {
+            anchor: selection.focus,
+            focus: selection.anchor,
+        };
+        assert_eq!(
+            native_selection("中😀", &backward, &runs),
+            Some((1..3, true))
+        );
         assert!(native_selection("中😀", &selection, &HashMap::new()).is_none());
     }
 }

@@ -158,6 +158,7 @@ fn anchors(source: &str) -> HashSet<String> {
 mod tests {
     use super::*;
     #[test]
+    // Spec: docs/acceptance/m0.md#自动检查
     fn anchors_follow_heading_text_and_explicit_ids() {
         let ids = anchors("## 逻辑选择\n## `A` / B\n## Same\n## Same\n<a id=\"named\"></a>\n");
         for id in ["逻辑选择", "a--b", "same", "same-1", "named"] {
@@ -165,6 +166,7 @@ mod tests {
         }
     }
     #[test]
+    // Spec: docs/acceptance/m0.md#自动检查
     fn decodes_utf8_and_rejects_invalid_escapes() {
         assert_eq!(decode("a%20b").expect("valid escape"), "a b");
         assert!(decode("%").is_err());
@@ -172,6 +174,7 @@ mod tests {
         assert!(decode("%zz").is_err());
     }
     #[test]
+    // Spec: docs/acceptance/m0.md#自动检查
     fn detects_broken_targets_and_anchors() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .parent()

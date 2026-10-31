@@ -6,7 +6,7 @@ use typst::{
     text::Font,
     utils::LazyHash,
 };
-use typst_kit::fonts::{FontStore, embedded, system};
+use typst_kit::fonts::{FontStore, system};
 
 pub(super) struct PrototypeWorld {
     library: LazyHash<Library>,
@@ -17,7 +17,17 @@ pub(super) struct PrototypeWorld {
 impl PrototypeWorld {
     pub(super) fn new(text: &str) -> Self {
         let mut fonts = FontStore::new();
-        fonts.extend(embedded());
+        for bytes in [
+            include_bytes!("../../../assets/fonts/libertinus-serif-regular.otf").as_slice(),
+            include_bytes!("../../../assets/fonts/libertinus-serif-bold.otf").as_slice(),
+            include_bytes!("../../../assets/fonts/libertinus-serif-italic.otf").as_slice(),
+            include_bytes!("../../../assets/fonts/libertinus-serif-bolditalic.otf").as_slice(),
+        ] {
+            fonts.extend(Font::iter(Bytes::new(bytes)).map(|font| {
+                let info = font.info().clone();
+                (font, info)
+            }));
+        }
         fonts.extend(system());
         Self {
             library: LazyHash::new(Library::default()),

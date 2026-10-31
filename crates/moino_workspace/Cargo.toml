@@ -12,6 +12,8 @@ moino_editor.workspace = true
 moino_platform.workspace = true
 moino_math.workspace = true
 moino_diagram.workspace = true
+moino_export.workspace = true
+moino_preview.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }

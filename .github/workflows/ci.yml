@@ -34,6 +34,7 @@ jobs:
       - name: Toolchain
         shell: bash
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
       - name: Format
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
@@ -69,6 +70,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install 1.99.1 --profile minimal
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          key: policy
       - run: cargo install cargo-deny --version 0.20.2 --locked
       - run: cargo deny --locked check
   coverage:
@@ -78,6 +82,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup toolchain install 1.99.1 --profile minimal
       - run: rustup component add llvm-tools-preview
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          key: coverage
       - run: cargo install cargo-llvm-cov --version 0.9.1 --locked
       - name: L0 coverage
         run: cargo llvm-cov -p moino_jobs -p moino_platform -p moino_math -p moino_diagram -p moino_export -p moino_preview --locked --fail-under-lines 80 --lcov --output-path target/l0.lcov

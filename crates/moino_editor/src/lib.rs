@@ -6,7 +6,7 @@ mod surface;
 pub use dedicated::DedicatedProbe;
 
 use gpui_kit::base::text::editor_host::{
-    BlockNode, FlowPosition, InlineNode, LeafGeometry, Paragraph, RenderContext,
+    BlockNode, FlowPosition, InlineNode, LeafGeometry, Paragraph, RenderContext, TextMark,
 };
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{prelude::*, *};
@@ -30,8 +30,9 @@ actions!(
 pub struct PrototypeEditor {
     text: String,
     selection: Range<usize>,
+    selection_reversed: bool,
     marked: Option<Range<usize>>,
-    original_composition: Option<(String, Range<usize>)>,
+    original_composition: Option<(String, Range<usize>, bool)>,
     focus: FocusHandle,
     geometry: Rc<RefCell<HashMap<u64, LeafGeometry>>>,
     accessible_runs: Rc<RefCell<HashMap<accesskit::NodeId, Range<usize>>>>,
@@ -43,6 +44,7 @@ impl PrototypeEditor {
         Self {
             text: "墨 Moino · 中文 日本語 한국어 😀".into(),
             selection: 0..0,
+            selection_reversed: false,
             marked: None,
             original_composition: None,
             focus: cx.focus_handle().tab_stop(true),
@@ -64,28 +66,21 @@ impl PrototypeEditor {
         cx.notify();
     }
 
-    fn edit(&mut self, range: Option<Range<usize>>, text: &str) {
+    fn edit(&mut self, range: Option<Range<usize>>, text: &str) -> Option<Range<usize>> {
         let target = range
             .or_else(|| self.marked.clone())
             .unwrap_or_else(|| self.selection.clone());
-        let Some(start) = byte_from_utf16(&self.text, target.start) else {
-            return;
-        };
-        let Some(end) = byte_from_utf16(&self.text, target.end) else {
-            return;
-        };
+        let start = byte_from_utf16(&self.text, target.start)?;
+        let end = byte_from_utf16(&self.text, target.end)?;
         if start > end {
-            return;
+            return None;
         }
-        self.text
-            .replace_range(start..end, &text.replace("\r\n", "\n").replace('\r', "\n"));
-        let cursor = target.start
-            + text
-                .replace("\r\n", "\n")
-                .replace('\r', "\n")
-                .encode_utf16()
-                .count();
+        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
+        self.text.replace_range(start..end, &normalized);
+        let cursor = target.start + normalized.encode_utf16().count();
         self.selection = cursor..cursor;
+        self.selection_reversed = false;
+        Some(target.start..cursor)
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
@@ -97,12 +92,14 @@ impl PrototypeEditor {
                 self.selection.start -= ch.len_utf16();
             }
         }
-        self.edit(None, "");
-        self.changed(window, cx);
+        if self.edit(None, "").is_some() {
+            self.changed(window, cx);
+        }
     }
     fn enter(&mut self, _: &Enter, window: &mut Window, cx: &mut Context<Self>) {
-        self.edit(None, "\n");
-        self.changed(window, cx);
+        if self.edit(None, "\n").is_some() {
+            self.changed(window, cx);
+        }
     }
     fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(byte) = byte_from_utf16(&self.text, self.selection.start) {
@@ -113,6 +110,7 @@ impl PrototypeEditor {
                     .map_or(0, char::len_utf16),
             );
             self.selection = at..at;
+            self.selection_reversed = false;
             self.changed(window, cx);
         }
     }
@@ -121,6 +119,7 @@ impl PrototypeEditor {
             let at =
                 self.selection.end + self.text[byte..].chars().next().map_or(0, char::len_utf16);
             self.selection = at..at;
+            self.selection_reversed = false;
             self.changed(window, cx);
         }
     }
@@ -139,11 +138,20 @@ pub fn init(cx: &mut App) {
 impl Render for PrototypeEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut paragraph = Paragraph::default().with_leaf_key(1);
-        paragraph.push(InlineNode::new(if self.text.is_empty() {
-            " ".into()
-        } else {
-            self.text.clone()
-        }));
+        let marks = self
+            .text
+            .find("Moino")
+            .map(|start| (start..start + "Moino".len(), TextMark::default().bold()))
+            .into_iter()
+            .collect();
+        paragraph.push(
+            InlineNode::new(if self.text.is_empty() {
+                " ".into()
+            } else {
+                self.text.clone()
+            })
+            .marks(marks),
+        );
         let block = BlockNode::Paragraph(paragraph);
         let render_context = RenderContext::from_app(cx);
         let child = block.render_with_id(
@@ -155,6 +163,7 @@ impl Render for PrototypeEditor {
         );
         let accessibility_text = self.text.clone();
         let accessibility_selection = self.selection.clone();
+        let accessibility_reversed = self.selection_reversed;
         let accessibility_geometry = self.geometry.clone();
         let runs = self.accessible_runs.clone();
         let selection_owner = cx.entity();
@@ -173,6 +182,7 @@ impl Render for PrototypeEditor {
                             builder,
                             &accessibility_text,
                             &accessibility_selection,
+                            accessibility_reversed,
                             geometry,
                         );
                     }
@@ -181,8 +191,9 @@ impl Render for PrototypeEditor {
                     if let Some(accesskit::ActionData::Value(value)) = data {
                         value_owner.update(cx, |editor, cx| {
                             let end = editor.text.encode_utf16().count();
-                            editor.edit(Some(0..end), value);
-                            editor.changed(window, cx);
+                            if editor.edit(Some(0..end), value).is_some() {
+                                editor.changed(window, cx);
+                            }
                         });
                     }
                 })
@@ -191,12 +202,13 @@ impl Render for PrototypeEditor {
                     move |data, window, cx| {
                         if let Some(accesskit::ActionData::SetTextSelection(selection)) = data {
                             selection_owner.update(cx, |editor, cx| {
-                                if let Some(range) = accessibility::native_selection(
+                                if let Some((range, reversed)) = accessibility::native_selection(
                                     &editor.text,
                                     selection,
                                     &editor.accessible_runs.borrow(),
                                 ) {
                                     editor.selection = range;
+                                    editor.selection_reversed = reversed;
                                 }
                                 editor.changed(window, cx);
                             });
@@ -220,6 +232,7 @@ impl Render for PrototypeEditor {
                             if this.text.is_char_boundary(byte) {
                                 let offset = this.text[..byte].encode_utf16().count();
                                 this.selection = offset..offset;
+                                this.selection_reversed = false;
                             }
                         }
                         this.changed(window, cx);

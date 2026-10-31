@@ -16,6 +16,7 @@ impl Drop for Server {
 }
 
 #[test]
+// Spec: docs/acceptance/m0.md#技术原型
 fn second_process_forwards_and_endpoint_is_reusable() {
     let name = format!("moino-m0-{}", std::process::id());
     let mut child = Server(

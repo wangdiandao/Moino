@@ -148,6 +148,7 @@ fn check_inheritance(value: &toml::Value, name: &str) -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    // Spec: docs/acceptance/m0.md#自动检查
     fn reads_authoritative_allowlist() {
         let graph = allowed(include_str!("../../docs/architecture.md"));
         assert!(graph["moino_jobs"].is_empty());
@@ -156,6 +157,7 @@ mod tests {
         assert!(graph["moino_workspace"].contains("moino_document"));
     }
     #[test]
+    // Spec: docs/acceptance/m0.md#自动检查
     fn rejects_member_version_overrides() {
         let bad: toml::Value = toml::from_str("[dependencies]\nserde = '1'").expect("toml");
         assert!(check_inheritance(&bad, "example").is_err());

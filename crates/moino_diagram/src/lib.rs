@@ -13,7 +13,10 @@ pub fn render_svg(source: &str) -> Result<String, DiagramError> {
         .render(merman::RenderRequest::svg(
             source,
             merman::OperationControl::new(),
-            merman::SvgRequest::default(),
+            merman::SvgRequest {
+                pipeline: Some(merman::svg::SvgPipeline::resvg_safe()),
+                ..Default::default()
+            },
         ))
         .map_err(|error| DiagramError(error.to_string()))?;
     match result {
@@ -26,6 +29,7 @@ pub fn render_svg(source: &str) -> Result<String, DiagramError> {
 mod tests {
     use super::*;
     #[test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn renders_flowchart_and_sequence_with_real_engine() {
         for source in [
             "flowchart TD\nA[Start] --> B[Done]",
@@ -34,9 +38,15 @@ mod tests {
             let svg = render_svg(source).expect("supported diagram");
             assert!(svg.contains("<svg"));
             assert!(svg.contains("Start") || svg.contains("Alice"));
+            assert!(
+                svg.contains("<text"),
+                "native renderers need SVG text labels"
+            );
+            assert!(!svg.contains("<foreignObject"));
         }
     }
     #[test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn malformed_diagram_is_not_success() {
         assert!(render_svg("not a diagram").is_err());
     }

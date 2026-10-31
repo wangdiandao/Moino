@@ -123,6 +123,7 @@ mod tests {
     use gpui_kit::{AppContext, TestAppContext, px};
 
     #[gpui_kit::test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn mounted_editor_preserves_text_origin_and_surrounding_geometry(cx: &mut TestAppContext) {
         cx.update(gpui_kit::init);
         let (handle, probe) = cx.update(|cx| {
@@ -132,23 +133,34 @@ mod tests {
             .expect("window")
         });
         cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
-            let before = window.find("code-slot").bounds();
-            let text_origin = probe.read(cx).geometry.borrow()[&2].position_for_index(0);
-            window.click("mount-code", cx);
-            let after = window.find("code-slot").bounds();
-            assert_eq!(before, after);
-            let active = probe.read(cx).editor.read(cx).input_bounds().origin;
-            assert!(
-                (active.x - text_origin.x).abs() <= px(1.),
-                "horizontal text drift: {active:?} vs {text_origin:?}"
-            );
-            assert!(
-                (active.y - text_origin.y).abs() <= px(1.),
-                "vertical text drift: {active:?} vs {text_origin:?}"
-            );
-            window.click("mount-code", cx);
-            assert_eq!(window.find("code-slot").bounds(), before);
+            for font_size in [14., 18., 24.] {
+                gpui_kit::component::Theme::update(cx, |theme| theme.font_size = px(font_size));
+                window.render_frame(cx);
+                let before = window.find("code-slot").bounds();
+                let text_origin = probe.read(cx).geometry.borrow()[&2].position_for_index(0);
+                let line_height = probe.read(cx).geometry.borrow()[&2].line_height();
+                window.click("mount-code", cx);
+                let after = window.find("code-slot").bounds();
+                assert_eq!(before, after);
+                let active = probe.read(cx).editor.read(cx).input_bounds().origin;
+                assert!(
+                    (active.x - text_origin.x).abs() <= px(1.),
+                    "horizontal text drift: {active:?} vs {text_origin:?}"
+                );
+                assert!(
+                    (active.y - text_origin.y).abs() <= px(1.),
+                    "vertical text drift: {active:?} vs {text_origin:?}"
+                );
+                let active_line_height = probe
+                    .read(cx)
+                    .editor
+                    .read(cx)
+                    .line_height()
+                    .expect("Editor row geometry");
+                assert!((active_line_height - line_height).abs() <= px(1.));
+                window.click("mount-code", cx);
+                assert_eq!(window.find("code-slot").bounds(), before);
+            }
         })
         .expect("update");
     }

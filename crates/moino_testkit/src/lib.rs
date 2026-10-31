@@ -32,6 +32,7 @@ impl Clock for ControlledClock {
 mod tests {
     use super::*;
     #[test]
+    // Spec: docs/acceptance/m0.md#自动检查
     fn time_only_advances_explicitly_and_overflow_is_atomic() {
         let clock = ControlledClock::default();
         assert_eq!(clock.now(), Tick::default());

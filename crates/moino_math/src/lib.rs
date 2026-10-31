@@ -27,6 +27,7 @@ pub fn render_svg(source: &str) -> Result<String, MathError> {
 mod tests {
     use super::*;
     #[test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn formula_produces_paths_without_browser_fonts() {
         let svg = render_svg(r"\frac{-b \pm \sqrt{b^2-4ac}}{2a}").expect("supported formula");
         assert!(svg.contains("<path"));
@@ -34,6 +35,7 @@ mod tests {
         assert!(!svg.contains("<script"));
     }
     #[test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn invalid_formula_returns_diagnostic() {
         assert!(render_svg(r"\frac{").is_err());
     }

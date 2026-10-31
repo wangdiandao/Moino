@@ -1,6 +1,7 @@
 //! Repository checks and generated trace reports; never linked into the application.
 mod docs;
 mod layers;
+mod trace;
 
 use anyhow::{Context, Result, bail};
 use moino_testkit::{Vector, load_vectors};
@@ -42,7 +43,7 @@ fn main() -> Result<()> {
             fs::write(
                 root.join("target/trace.json"),
                 serde_json::to_vec_pretty(&json!({
-                    "schema": 1, "kind": "specification-links", "cases": report
+                    "schema": 1, "kind": "specification-links", "cases": report, "tests": trace::tests(root)?
                 }))?,
             )?;
             rows.len()

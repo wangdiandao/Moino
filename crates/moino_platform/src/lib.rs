@@ -96,6 +96,7 @@ pub fn receive_request(stream: &mut impl Read) -> io::Result<LaunchRequest> {
 mod tests {
     use super::*;
     #[test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn framing_preserves_unicode_and_rejects_malformed_or_oversized_messages() {
         let request = LaunchRequest::new(vec!["文档/墨.md".into()]);
         let mut wire = Vec::new();

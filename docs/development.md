@@ -9,7 +9,7 @@
 | `docs/` | [规格与工程文档](README.md) |
 | `crates/` | [分层 Rust crate](architecture.md#分层与-crate) |
 | `xtask/` | Rust 编写的分层、文档、向量和追溯检查，不另维护多语言工具体系 |
-| `assets/`（规划中） | [发布资源](release.md#交付物) |
+| `assets/` | 字体与[发布资源](release.md#交付物) |
 | `.github/` | GitHub Actions、任务和 [PR 模板](../.github/pull_request_template.md) |
 
 目标仓库公开托管于 GitHub，主要由编码代理实现、用户审查；Windows 优先开发与手动验证，CI 从工程建立起覆盖三平台。

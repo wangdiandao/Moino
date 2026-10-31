@@ -25,7 +25,7 @@ impl EntityInputHandler for PrototypeEditor {
     ) -> Option<UTF16Selection> {
         Some(UTF16Selection {
             range: self.selection.clone(),
-            reversed: false,
+            reversed: self.selection_reversed,
         })
     }
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
@@ -43,7 +43,9 @@ impl EntityInputHandler for PrototypeEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.edit(range, text);
+        if self.edit(range, text).is_none() {
+            return;
+        }
         self.marked = None;
         self.original_composition = None;
         self.changed(window, cx);
@@ -57,26 +59,34 @@ impl EntityInputHandler for PrototypeEditor {
         cx: &mut Context<Self>,
     ) {
         if text.is_empty() {
-            if let Some((text, selection)) = self.original_composition.take() {
+            if let Some((text, selection, reversed)) = self.original_composition.take() {
                 self.text = text;
                 self.selection = selection;
+                self.selection_reversed = reversed;
             }
             self.marked = None;
         } else {
-            if self.original_composition.is_none() {
-                self.original_composition = Some((self.text.clone(), self.selection.clone()));
+            let original = self.original_composition.is_none().then(|| {
+                (
+                    self.text.clone(),
+                    self.selection.clone(),
+                    self.selection_reversed,
+                )
+            });
+            let Some(inserted) = self.edit(range, text) else {
+                return;
+            };
+            if original.is_some() {
+                self.original_composition = original;
             }
-            let start = range
-                .as_ref()
-                .or(self.marked.as_ref())
-                .unwrap_or(&self.selection)
-                .start;
-            self.edit(range, text);
-            let end = start + text.encode_utf16().count();
-            self.marked = Some(start..end);
+            let start = inserted.start;
+            let end = inserted.end;
+            self.marked = Some(inserted);
             if let Some(selection) = selection
                 && selection.start <= selection.end
                 && selection.end <= end - start
+                && byte_from_utf16(&self.text, start + selection.start).is_some()
+                && byte_from_utf16(&self.text, start + selection.end).is_some()
             {
                 self.selection = start + selection.start..start + selection.end;
             }
@@ -140,6 +150,7 @@ mod tests {
     use gpui_kit::{AppContext, ElementInputHandler, TestAppContext};
 
     #[test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn utf16_boundaries_do_not_split_surrogate_pairs() {
         assert_eq!(byte_from_utf16("中😀a", 1), Some(3));
         assert_eq!(byte_from_utf16("中😀a", 2), None);
@@ -149,6 +160,7 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn composition_commit_cancel_and_native_bounds_use_real_host(cx: &mut TestAppContext) {
         cx.update(|cx| {
             gpui_kit::init(cx);
@@ -169,6 +181,18 @@ mod tests {
             let bounds = window.find("live-editor").bounds();
             let mut input =
                 TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window);
+            input.compose_text(Some(9999..9999), "invalid", None, cx);
+            assert_eq!(editor.read(cx).text(), original);
+            assert!(input.marked_text_range(cx).is_none());
+            input.compose_text(Some(0..0), "中\r\n😀", Some(3..3), cx);
+            assert!(editor.read(cx).text().starts_with("中\n😀"));
+            assert_eq!(input.marked_text_range(cx), Some(0..4));
+            assert_eq!(
+                input.selected_text_range(cx).expect("selection").range,
+                4..4
+            );
+            input.compose_text(None, "", None, cx);
+            assert_eq!(editor.read(cx).text(), original);
             input.compose_text(Some(0..0), "に", Some(1..1), cx);
             assert_eq!(input.marked_text_range(cx), Some(0..1));
             input.compose_text(None, "日本😀", Some(4..4), cx);

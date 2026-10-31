@@ -58,6 +58,7 @@ pub struct PrototypeWorkspace {
     menu_visible: bool,
     math: Option<Arc<Image>>,
     diagram: Option<Arc<Image>>,
+    preview: Option<Arc<Image>>,
     error: Option<SharedString>,
     _render: Task<()>,
 }
@@ -79,12 +80,16 @@ impl PrototypeWorkspace {
                         "flowchart LR\nA[Markdown] --> B[Native layout] --> C[PDF]",
                     )
                     .map_err(|error| error.to_string())?;
-                    Ok::<_, String>((math, diagram))
+                let pdf = moino_export::compile_prototype("#set page(width: 260pt, height: 160pt, margin: 20pt)\n= Moino\n中文 · 日本語 · 한국어\n\nPDF → hayro → GPUI")
+                    .map_err(|error| error.to_string())?;
+                let preview = moino_preview::render_pdf_page(pdf.bytes().to_vec(), 0)
+                    .map_err(|error| error.to_string())?;
+                Ok::<_, String>((math, diagram, preview))
                 })
                 .await;
             let _ = this.update(cx, |this, cx| {
                 match result {
-                    Ok((math, diagram)) => {
+                    Ok((math, diagram, preview)) => {
                         this.math = Some(Arc::new(Image::from_bytes(
                             ImageFormat::Svg,
                             math.into_bytes(),
@@ -93,6 +98,7 @@ impl PrototypeWorkspace {
                             ImageFormat::Svg,
                             diagram.into_bytes(),
                         )));
+                        this.preview = Some(Arc::new(Image::from_bytes(ImageFormat::Png, preview)));
                     }
                     Err(error) => this.error = Some(error.into()),
                 }
@@ -106,6 +112,7 @@ impl PrototypeWorkspace {
             menu_visible: false,
             math: None,
             diagram: None,
+            preview: None,
             error: None,
             _render: render,
         }
@@ -172,6 +179,20 @@ impl Render for PrototypeWorkspace {
                                     img(image).w_full().h_40().object_fit(ObjectFit::Contain),
                                 )
                             })
+                            .when_some(self.preview.clone(), |this, image| {
+                                this.child(
+                                    div()
+                                        .id("pdf-preview")
+                                        .role(Role::Image)
+                                        .aria_label("PDF page 1")
+                                        .child(
+                                            img(image)
+                                                .w_full()
+                                                .h_48()
+                                                .object_fit(ObjectFit::Contain),
+                                        ),
+                                )
+                            })
                             .when_some(self.error.clone(), |this, error| {
                                 this.child(div().id("render-error").role(Role::Alert).child(error))
                             }),
@@ -203,6 +224,7 @@ mod tests {
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{AppContext, TestAppContext};
     #[gpui_kit::test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn menu_overlay_does_not_move_document(cx: &mut TestAppContext) {
         cx.update(init);
         let (handle, _) = cx.update(|cx| {

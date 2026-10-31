@@ -5238,8 +5238,10 @@ dependencies = [
  "gpui-kit",
  "moino_diagram",
  "moino_editor",
+ "moino_export",
  "moino_math",
  "moino_platform",
+ "moino_preview",
 ]
 
 [[package]]
@@ -8971,7 +8973,6 @@ dependencies = [
  "rustc-hash 2.1.3",
  "serde",
  "serde_json",
- "typst-assets",
  "typst-library",
  "typst-syntax",
  "typst-timing",

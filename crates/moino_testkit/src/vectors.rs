@@ -173,6 +173,7 @@ mod tests {
     use super::*;
     const CASE: &str = "- name: sample\n  specs: [../../modules/editing.md#enter]\n  scenario: enter-splits-paragraph\n  input: |\n    a  \n  expected: |\n    b\n  description: 测试\n";
     #[test]
+    // Spec: docs/acceptance/m0.md#自动检查
     fn preserves_whitespace_and_optional_action() {
         let rows = parse_vectors(CASE, Path::new("sample.yaml")).expect("valid case");
         assert_eq!(rows[0].input(), "a  \n");
@@ -180,6 +181,7 @@ mod tests {
         assert!(rows[0].action().is_none());
     }
     #[test]
+    // Spec: docs/acceptance/m0.md#自动检查
     fn rejects_invalid_shapes_fields_and_duplicate_names() {
         for source in [
             "{}".to_owned(),
@@ -197,6 +199,7 @@ mod tests {
         }
     }
     #[test]
+    // Spec: docs/acceptance/m0.md#自动检查
     fn repository_cases_load_without_running_product_assertions() {
         let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/acceptance/vectors");
         let rows = load_vectors(&directory).expect("formal vectors");

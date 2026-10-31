@@ -56,10 +56,12 @@ pub fn render_pdf_page(bytes: Vec<u8>, page_index: usize) -> Result<Vec<u8>, Pre
 mod tests {
     use super::*;
     #[test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn malformed_pdf_returns_error() {
         assert!(render_pdf_page(b"invalid pdf".to_vec(), 0).is_err());
     }
     #[test]
+    // Spec: docs/acceptance/m0.md#技术原型
     fn decodes_actual_typst_page_and_rejects_invalid_page_or_budget() {
         let pdf = moino_export::compile_prototype("#set page(width: 100pt, height: 100pt, margin: 10pt)\nHello\n#rect(width: 20pt, height: 20pt, fill: red)").expect("fixture PDF");
         let png = render_pdf_page(pdf.bytes().to_vec(), 0).expect("rasterized page");

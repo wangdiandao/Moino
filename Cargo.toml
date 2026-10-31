@@ -36,7 +36,7 @@ merman = { version = "=0.9.2", default-features = false, features = ["all-diagra
 typst = "=0.15.1"
 typst-layout = "=0.15.1"
 typst-pdf = "=0.15.1"
-typst-kit = { version = "=0.15.1", features = ["embedded-fonts", "scan-fonts"] }
+typst-kit = { version = "=0.15.1", features = ["scan-fonts"] }
 hayro = "=0.8.0"
 image = { version = "=0.25.10", default-features = false, features = ["png"] }
 
