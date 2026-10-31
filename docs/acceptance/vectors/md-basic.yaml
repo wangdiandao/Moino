@@ -50,7 +50,9 @@
   scenario: basic-block-parsing
   input: |
     a
+
     ---
+
     b
   expected: |
     Paragraph

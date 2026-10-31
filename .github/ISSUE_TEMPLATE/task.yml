@@ -1,0 +1,17 @@
+name: Development task
+description: One reviewable implementation task
+body:
+  - type: textarea
+    id: scope
+    attributes:
+      label: 目标与范围
+      description: 归属正文、范围和排除项
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收与同步文档
+      description: 场景、向量、实际命令、平台和未验证边界
+    validations:
+      required: true

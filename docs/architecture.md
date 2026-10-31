@@ -48,6 +48,8 @@ Moino 拥有文档身份、修订、历史、选择、焦点、无障碍、滚�
 
 单实例 IPC、打印交接、文件关联与系统偏好探测仅由 `moino_platform` 提供安全接口。设置、恢复、缓存、日志、临时导出分别使用平台标准配置、数据、缓存和临时目录下的产品数据目录，不写安装目录。
 
+IPC 同步原型以非阻塞监听接受连接，再显式将已接受流设为阻塞；不能假设各系统都清除监听套接字的非阻塞标志。帧读写放在后台执行，不占用界面线程。
+
 ## 运行时模型
 
 进程、文档会话与窗口关系见[会话](contracts/sessions.md)。只使用 GPUI 前台、后台执行器，禁止直接创建 tokio 运行时或线程池；HTTP 使用 Kit 客户端。
@@ -84,7 +86,7 @@ Moino 拥有文档身份、修订、历史、选择、焦点、无障碍、滚�
 | 数学 | `ratex-parser` / `ratex-layout` / `ratex-svg 0.1.15` | `moino_math` |
 | 图表 | `merman 0.9.2` | `moino_diagram` |
 | 代码高亮 | GPUI Kit `syntect` 特性 | `moino_editor` |
-| 分页导出 | `typst` / `typst-pdf` / `typst-render 0.15.1` | `moino_export` |
+| 分页导出 | `typst` / `typst-layout` / `typst-pdf` / `typst-render 0.15.1`；`typst-kit` 提供字体发现 | `moino_export` |
 | 文档格式 | `docx-rs 0.4.22`、`epub-builder 0.8.3`、`zip` | `moino_export`、`moino_io` |
 | PDF 预览 | `hayro 0.8.0` | `moino_preview` |
 | 拼写 | `spellbook 0.4.2` | `moino_spell` |

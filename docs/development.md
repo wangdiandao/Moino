@@ -2,15 +2,15 @@
 
 ## 工程目录与使用边界
 
-本地目录只有根说明、`docs/` 和验收数据，尚无 Git 检出、Cargo 工作区、工具链文件、源码或 CI。以下是目标工程约定，不能据此声称命令已可运行；文档任务不顺带初始化工程。
+工程使用 Cargo 工作区，按里程碑引入有实际实现的 crate，不预建其余模块。M0 的技术验证使用独立 example 入口，不作为正式编辑器发布；运行与证据要求见[基础验证](acceptance/m0.md)。文档任务不顺带初始化工程。
 
 | 位置 | 职责 |
 |---|---|
 | `docs/` | [规格与工程文档](README.md) |
-| `crates/`（规划中） | [分层 Rust crate](architecture.md#分层与-crate) |
-| `xtask/`（规划中） | Rust 编写的分层、文档、向量和追溯检查，不另维护多语言工具体系 |
-| `assets/`（规划中） | [发布资源](release.md#交付物) |
-| `.github/`（规划中） | GitHub Actions、任务和 PR 模板 |
+| `crates/` | [分层 Rust crate](architecture.md#分层与-crate) |
+| `xtask/` | Rust 编写的分层、文档、向量和追溯检查，不另维护多语言工具体系 |
+| `assets/` | 字体与[发布资源](release.md#交付物) |
+| `.github/` | GitHub Actions、任务和 [PR 模板](../.github/pull_request_template.md) |
 
 目标仓库公开托管于 GitHub，主要由编码代理实现、用户审查；Windows 优先开发与手动验证，CI 从工程建立起覆盖三平台。
 
@@ -42,6 +42,8 @@
 从 `main` 建 `<type>/<area>-<slug>` 短分支；type 为 feat、fix、docs、refactor、test、chore、spike，area 为小写职责或 crate。提交与 Issue、PR 标题用英文 Conventional Commits，scope 小写，正文中文。
 
 PR 包含目的、Issue、归属章节、文档变化、实际验证、未验证项及公共 API 的签名、用途；破坏性变更附 diff。行为与验收同 PR 更新，代码按规范整理后提交。经审查、CI 后 squash 合并，`main` 保护线性历史；单维护者不要求额外审批人数。
+
+用户要求完成里程碑时，交付包含实现、验证、审查、合并 PR，以及关闭关联 Issue 和 Milestone；只有用户明确限定为草稿或等待外部审查时才停在待审状态。审查发现的问题先修复并验证；CI 失败、未解决阻断问题或仓库权限不足时记录具体阻塞，不能把“PR 已可审查”当作完整交付。
 
 审查先说明目的范围，再判断需求方案，最后列具体问题、已做验证及局限。范围外问题另记 Issue，不混入当前改动。
 

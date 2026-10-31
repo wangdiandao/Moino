@@ -1,0 +1,94 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Native Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libasound2-dev vulkan-validationlayers libvulkan1 libxcb-shape0-dev libxcb-xfixes0-dev fonts-noto-cjk
+      - name: Toolchain
+        shell: bash
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Tests
+        run: cargo test --workspace --all-targets --locked
+      - name: Documentation tests
+        run: cargo test --workspace --doc --locked
+      - name: Repository checks
+        shell: bash
+        run: |
+          cargo xtask layers
+          cargo xtask docs
+          cargo xtask vectors
+          cargo xtask trace
+      - name: PDF and raster probes
+        shell: bash
+        run: |
+          cargo run -p moino_export --example m0 --locked
+          cargo run -p moino_preview --example m0 --locked
+      - name: Evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: m0-${{ runner.os }}
+          path: |
+            target/trace.json
+            target/m0/
+  policy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install 1.99.1 --profile minimal
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          key: policy
+      - run: cargo install cargo-deny --version 0.20.2 --locked
+      - run: cargo deny --locked check
+  coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup toolchain install 1.99.1 --profile minimal
+      - run: rustup component add llvm-tools-preview
+      - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3
+        with:
+          key: coverage
+      - run: cargo install cargo-llvm-cov --version 0.9.1 --locked
+      - name: L0 coverage
+        run: cargo llvm-cov -p moino_jobs -p moino_platform -p moino_math -p moino_diagram -p moino_export -p moino_preview --locked --fail-under-lines 80 --lcov --output-path target/l0.lcov
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: l0-coverage
+          path: target/l0.lcov

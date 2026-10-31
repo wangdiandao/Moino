@@ -77,10 +77,15 @@
 | [Inter](https://github.com/rsms/inter) | 正文与界面字体 | SIL OFL 1.1 |
 | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | 代码字体 | SIL OFL 1.1 |
 | KaTeX 字体（随 RaTeX 提供） | 数学字体 | SIL OFL 1.1 |
+| Libertinus Serif（取自固定 `typst-assets 0.15.1`，未修改） | M0 PDF 固定样本字体；不替代产品字体选择 | [SIL OFL 1.1](../assets/fonts/libertinus-ofl.txt) |
 | Hunspell `en_US` 词典（基于 SCOWL） | 随包拼写词典 | 以随包附带的许可证文本为准，打包前逐项核对 |
 
 ## 许可边界
 
-项目许可证见[产品身份](product.md#产品身份)，本地尚无独立 `LICENSE` 文件。依赖允许 MIT、Apache-2.0、BSD、ISC、Zlib、Unicode、CC0、0BSD 与 MPL-2.0，字体为 OFL-1.1，由 cargo-deny 检查。
+项目使用 [Apache-2.0](../LICENSE)。依赖允许 MIT、Apache-2.0（包括 LLVM 例外）、BSD、ISC、Zlib、Unicode、CC0、0BSD 与 MPL-2.0，字体为 OFL-1.1，由 `deny.toml` 和 cargo-deny 检查。LLVM 例外来自归档写入工具链的传递依赖，保留其许可文本。
+
+merman 使用显式 `all-diagrams` 与 `complete-svg`，不启用含 EPL-2.0 代码的 ELK 特性。Typst 原型的传递依赖 citationberg 引入旧版 quick-xml；仅编译受信固定样本，World 拒绝外部 CSL、参考文献、包和其他文件。两条 XML 拒绝服务公告的限定处置见 `deny.toml`，正式导出接入外部资源前必须重新审查；不得扩大该例外。未维护公告检查工作区直接依赖，传递依赖随固定上游版本单独跟踪。
+
+不启用 `typst-kit/embedded-fonts`；它的默认集合含 GUST、Bitstream 与带 GPL 字体例外的字体。原型只嵌入上述未修改的 Libertinus Serif，保留其版权声明与 OFL；中日韩通过系统字体解析，不能把本机可用字体视为正式随包字体已准备就绪。
 
 Zed 应用等 GPL 代码只参考架构与约定，不复制源码。词典清单记录各自许可并逐份核对再分发条件；来源清单不能替代引入时检查。
