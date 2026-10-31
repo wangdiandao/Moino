@@ -10,6 +10,10 @@ license = "Apache-2.0"
 publish = false
 
 [workspace.dependencies]
+moino_text = { path = "crates/moino_text" }
+ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_utf16"] }
+unicode-segmentation = "=1.13.3"
+proptest = "=1.12.0"
 moino_jobs = { path = "crates/moino_jobs" }
 moino_testkit = { path = "crates/moino_testkit" }
 moino_platform = { path = "crates/moino_platform" }

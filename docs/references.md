@@ -42,6 +42,7 @@
 |---|---|
 | `gpui-kit` | Apache-2.0 |
 | `ropey` | MIT OR Apache-2.0 |
+| `unicode-segmentation` | MIT OR Apache-2.0 |
 | `ratex-layout` 等 RaTeX crate | MIT |
 | `merman` | MIT OR Apache-2.0 |
 | `typst` 系列 | Apache-2.0 |

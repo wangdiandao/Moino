@@ -5232,6 +5232,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "moino_text"
+version = "0.0.0"
+dependencies = [
+ "proptest",
+ "ropey",
+ "thiserror 2.0.21",
+ "unicode-segmentation",
+]
+
+[[package]]
 name = "moino_workspace"
 version = "0.0.0"
 dependencies = [
