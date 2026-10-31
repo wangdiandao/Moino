@@ -55,6 +55,14 @@ pub fn connect(name: &str) -> io::Result<Stream> {
     Stream::connect(name.to_ns_name::<GenericNamespaced>()?)
 }
 
+/// Accepts a stream and explicitly clears inherited nonblocking mode on BSD systems.
+/// Perform subsequent synchronous frame IO on a background executor, never the UI thread.
+pub fn accept(listener: &Listener) -> io::Result<Stream> {
+    let stream = listener.accept()?;
+    stream.set_nonblocking(false)?;
+    Ok(stream)
+}
+
 /// Sends one bounded request; execution never interprets its paths as commands.
 pub fn send_request(stream: &mut impl Write, request: &LaunchRequest) -> io::Result<()> {
     let bytes = serde_json::to_vec(request)?;

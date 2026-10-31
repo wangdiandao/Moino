@@ -1,6 +1,5 @@
 //! Real two-process transport coverage; no application timers are simulated here.
-use interprocess::local_socket::traits::Listener as _;
-use moino_platform::{LaunchRequest, connect, listen, receive_request, send_request};
+use moino_platform::{LaunchRequest, accept, connect, listen, receive_request, send_request};
 use std::{
     io::{self, Read, Write},
     process::{Child, Command, Stdio},
@@ -23,7 +22,7 @@ fn second_process_forwards_and_endpoint_is_reusable() {
         Command::new(std::env::current_exe().expect("test executable"))
             .args(["--exact", "ipc_child", "--ignored"])
             .env("MOINO_TEST_SOCKET", &name)
-            .stdout(Stdio::null())
+            .stdout(Stdio::inherit())
             .stderr(Stdio::inherit())
             .spawn()
             .expect("server process"),
@@ -66,7 +65,7 @@ fn ipc_child() {
     let listener = listen(&name).expect("listen");
     let deadline = Instant::now() + Duration::from_secs(15);
     let mut stream = loop {
-        match listener.accept() {
+        match accept(&listener) {
             Ok(stream) => break stream,
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {}
             Err(error) => panic!("accept failed: {error}"),

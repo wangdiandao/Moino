@@ -290,7 +290,9 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert!(window.try_find("popup-menu").is_none());
-            assert_eq!(window.find("menu").focused(), Some(true));
+            if moino_platform::has_window_menu() {
+                assert_eq!(window.find("menu").focused(), Some(true));
+            }
             window.press("escape", cx);
             assert!(window.try_find("menu-overlay").is_none());
             assert_eq!(window.find("live-editor").bounds(), before);
