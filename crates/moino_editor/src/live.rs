@@ -237,6 +237,21 @@ impl LiveEditor {
         })
     }
 
+    fn display_head(&self) -> ScalarOffset {
+        if let Some(selected) = self.native_selection()
+            && let Ok(at) =
+                self.display_text()
+                    .utf16_to_scalar(Utf16Offset::new(if selected.reversed {
+                        selected.range.start
+                    } else {
+                        selected.range.end
+                    }))
+        {
+            return at;
+        }
+        self.document.selection().head().offset
+    }
+
     /// Routes a business editing intent through the same serialized command queue as native input.
     pub fn dispatch(&mut self, intent: Intent, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_composition(window, cx);
@@ -599,14 +614,8 @@ impl LiveEditor {
     }
 
     pub(super) fn paint_caret(&self, window: &mut Window, cx: &App) {
-        let at = self.native_selection().and_then(|selected| {
-            self.display_text()
-                .utf16_to_scalar(Utf16Offset::new(selected.range.end))
-                .ok()
-        });
         if self.focus.is_focused(window)
-            && let Some(at) = at
-            && let Some(bounds) = self.caret(at)
+            && let Some(bounds) = self.caret(self.display_head())
         {
             window.paint_quad(fill(bounds, cx.theme().foreground));
         }
@@ -616,14 +625,7 @@ impl LiveEditor {
         if !self.reveal_caret {
             return;
         }
-        let at = self
-            .native_selection()
-            .and_then(|selection| {
-                self.display_text()
-                    .utf16_to_scalar(Utf16Offset::new(selection.range.end))
-                    .ok()
-            })
-            .unwrap_or_else(|| self.document.selection().head().offset);
+        let at = self.display_head();
         let ix = self
             .leaves
             .iter()

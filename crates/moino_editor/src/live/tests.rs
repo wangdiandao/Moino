@@ -219,6 +219,8 @@ fn long_documents_only_layout_visible_leaves_and_reveal_remote_cursors(cx: &mut 
     let source = "paragraph\n\n".repeat(1000);
     cx.update(|cx| {
         gpui_kit::init(cx);
+        moino_theme::register_fonts(cx).expect("bundled test fonts");
+        moino_theme::apply(moino_theme::BuiltinTheme::Paper, cx);
         crate::init(cx);
     });
     let (handle, editor) = cx.update(|cx| {
@@ -259,6 +261,41 @@ fn long_documents_only_layout_visible_leaves_and_reveal_remote_cursors(cx: &mut 
         let caret = editor
             .caret(editor.selection().head().offset)
             .expect("remote geometry");
+        let viewport = editor.list.viewport_bounds();
+        assert!(caret.top() >= viewport.top() && caret.bottom() <= viewport.bottom());
+        assert!(editor.geometry.borrow().len() < 100);
+    });
+    cx.update_window(handle, |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.select_source(
+                super::selection(
+                    editor.snapshot().text().len(),
+                    moino_text::ScalarOffset::new(0),
+                ),
+                window,
+                cx,
+            );
+            assert!(
+                editor
+                    .native_selection()
+                    .expect("native selection")
+                    .reversed
+            );
+        });
+    })
+    .expect("backward selection to document start");
+    for _ in 0..3 {
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+        })
+        .expect("reveal backward selection head");
+    }
+    cx.update(|cx| {
+        let editor = editor.read(cx);
+        let caret = editor
+            .caret(editor.selection().head().offset)
+            .expect("head geometry");
         let viewport = editor.list.viewport_bounds();
         assert!(caret.top() >= viewport.top() && caret.bottom() <= viewport.bottom());
         assert!(editor.geometry.borrow().len() < 100);
