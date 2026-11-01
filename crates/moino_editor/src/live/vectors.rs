@@ -40,6 +40,12 @@ fn formal_editing_vectors_use_native_events_and_shared_actions(cx: &mut TestAppC
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/acceptance/vectors");
     let vectors = moino_testkit::load_vectors(&root).expect("formal vectors");
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        moino_theme::register_fonts(cx).expect("bundled test fonts");
+        moino_theme::apply(moino_theme::BuiltinTheme::Paper, cx);
+        crate::init(cx);
+    });
     let mut count = 0;
     for vector in vectors.iter().filter(|vector| {
         vector.source().file_name().is_some_and(|name| {
@@ -48,10 +54,6 @@ fn formal_editing_vectors_use_native_events_and_shared_actions(cx: &mut TestAppC
     }) {
         let (text, selected) = marked(vector.input());
         let action = vector.action().expect("vector actions");
-        cx.update(|cx| {
-            gpui_kit::init(cx);
-            crate::init(cx);
-        });
         let (handle, editor) = cx.update(|cx| {
             gpui_kit::open_window(Default::default(), cx, |window, cx| {
                 let editor = cx.new(|cx| {

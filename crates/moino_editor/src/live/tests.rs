@@ -76,6 +76,8 @@ fn vertical_navigation_waits_for_committed_geometry(cx: &mut TestAppContext) {
 fn open(cx: &mut TestAppContext, text: &'static str) -> (AnyWindowHandle, Entity<LiveEditor>) {
     cx.update(|cx| {
         gpui_kit::init(cx);
+        moino_theme::register_fonts(cx).expect("bundled test fonts");
+        moino_theme::apply(moino_theme::BuiltinTheme::Paper, cx);
         crate::init(cx);
     });
     cx.update(|cx| {

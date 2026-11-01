@@ -44,6 +44,15 @@ jobs:
         run: cargo test --workspace --all-targets --locked
       - name: Documentation tests
         run: cargo test --workspace --doc --locked
+      - name: Native editor build
+        run: cargo build -p moino --locked
+      - name: Windows editor for native validation
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: m2-windows-editor
+          path: target/debug/moino.exe
+          if-no-files-found: error
       - name: Repository checks
         shell: bash
         run: |
