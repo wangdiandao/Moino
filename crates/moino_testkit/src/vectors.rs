@@ -221,7 +221,7 @@ mod tests {
     fn repository_cases_load_without_running_product_assertions() {
         let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/acceptance/vectors");
         let rows = load_vectors(&directory).expect("formal vectors");
-        assert_eq!(rows.len(), 26);
+        assert_eq!(rows.len(), 40);
         assert_eq!(rows.iter().filter(|row| row.action().is_none()).count(), 10);
     }
 }

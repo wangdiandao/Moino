@@ -11,9 +11,15 @@ publish = false
 
 [workspace.dependencies]
 moino_text = { path = "crates/moino_text" }
+moino_markdown = { path = "crates/moino_markdown" }
+moino_document = { path = "crates/moino_document" }
+moino_editing = { path = "crates/moino_editing" }
 ropey = { version = "=2.0.0-beta.1", features = ["metric_chars", "metric_utf16"] }
 unicode-segmentation = "=1.13.3"
 proptest = "=1.12.0"
+caseless = "=0.2.2"
+finl_unicode = "=1.5.0"
+comrak = { version = "=0.59.0", default-features = false }
 moino_jobs = { path = "crates/moino_jobs" }
 moino_testkit = { path = "crates/moino_testkit" }
 moino_platform = { path = "crates/moino_platform" }

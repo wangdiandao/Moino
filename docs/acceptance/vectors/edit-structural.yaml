@@ -1,0 +1,139 @@
+- name: enter-keeps-two-paragraphs-after-input
+  specs: [../../modules/editing.md#enter]
+  scenario: enter-splits-paragraph
+  input: ab█cd
+  action: 'enter, insert:"X"'
+  expected: |-
+    ab
+
+    X█cd
+  description: 中间拆分后继续输入仍属于第二个段落
+
+- name: empty-star-pair-upgrades
+  specs: [../../modules/editing.md#自动配对与智能标点]
+  scenario: automatic-pairing
+  input: '*█*'
+  action: 'type:"*" (auto_pair=true)'
+  expected: '**█**'
+  description: 空对称标记对内连击优先升级为粗体标记对
+
+- name: empty-math-pair-becomes-block
+  specs: [../../modules/editing.md#自动配对与智能标点]
+  scenario: automatic-pairing
+  input: $█$
+  action: 'type:"$" (auto_pair=true)'
+  expected: |-
+    $$
+    █
+    $$
+  description: 行首空数学标记对升级为数学块
+
+- name: right-pair-skips-existing-marker
+  specs: [../../modules/editing.md#自动配对与智能标点]
+  scenario: automatic-pairing
+  input: (█)
+  action: 'type:")" (auto_pair=true)'
+  expected: ()█
+  description: 右配对符仅移动光标不新增文本事务
+
+- name: heading-converts-whole-soft-paragraph
+  specs: [../../modules/editing.md#格式命令]
+  scenario: formatting-toggle
+  input: |-
+    a
+    b█
+  action: block.heading1
+  expected: '# a b█'
+  description: 标题转换合并整个段落的软换行
+
+- name: ordered-enter-renumbers-following-items
+  specs: [../../modules/editing.md#enter]
+  scenario: list-enter
+  input: |-
+    1. one█
+    2. two
+    3. three
+  action: enter
+  expected: |-
+    1. one
+    2. █
+    3. two
+    4. three
+  description: 列表 Enter 与后续同级编号修改属于同一事务
+
+- name: clear-formatting-removes-block-and-inline-markers
+  specs: [../../modules/editing.md#格式命令]
+  scenario: formatting-toggle
+  input: '# ｢**墨**｣'
+  action: edit.clearFormatting
+  expected: 墨
+  description: 清除选区格式同时移除行内标记和块前缀
+
+- name: composition-bypasses-automatic-pairs
+  specs: [../../modules/editing.md#输入法组合]
+  scenario: ime-composition
+  input: █
+  action: 'composition:"("'
+  expected: (█
+  description: 已提交组合文本按一次普通事务插入，不触发配对
+
+- name: tab-keeps-cursor-inside-list-item
+  specs: [../../modules/editing.md#tab-与缩进]
+  scenario: tab-indentation
+  input: |-
+    - prev
+    - it█em
+  action: tab
+  expected: |-
+    - prev
+      - it█em
+  description: 列表 Tab 按上一项容器宽度缩进，保留正文内的光标
+
+- name: tab-without-previous-item-keeps-source
+  specs: [../../modules/editing.md#tab-与缩进]
+  scenario: tab-indentation
+  input: '- it█em'
+  action: tab
+  expected: '- it█em'
+  description: 没有上一同级项时 Tab 不生成文本事务
+
+- name: shift-tab-unlists-root-item
+  specs: [../../modules/editing.md#tab-与缩进]
+  scenario: tab-indentation
+  input: '- it█em'
+  action: shift-tab
+  expected: it█em
+  description: 根层列表项降级移除标记并保留逻辑光标
+
+- name: backspace-keeps-literal-code-marker
+  specs: [../../modules/editing.md#输入路由, ../../modules/editing.md#backspace-与-delete]
+  scenario: backspace-merges-blocks
+  input: |-
+    ```
+    - █item
+    ```
+  action: backspace
+  expected: |-
+    ```
+    -█item
+    ```
+  description: 代码内类似列表的文本按字素删除，不执行列表降级
+
+- name: empty-link-pair-becomes-link-structure
+  specs: [../../modules/editing.md#交互语法转换]
+  scenario: syntax-conversion
+  input: '[█]'
+  action: 'type:"]" (auto_pair=true)'
+  expected: '[█]()'
+  description: 空括号对立即补全链接结构
+
+- name: fence-trigger-opens-code-block
+  specs: [../../modules/editing.md#交互语法转换]
+  scenario: syntax-conversion
+  input: '``█'
+  action: 'type:"`" (auto_pair=true)'
+  expected: |-
+    ```
+    █
+    ```
+  description: 行首第三个反引号建立围栏并把光标放在源码行

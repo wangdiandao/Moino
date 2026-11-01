@@ -87,7 +87,7 @@ jobs:
           key: coverage
       - run: cargo install cargo-llvm-cov --version 0.9.1 --locked
       - name: L0 coverage
-        run: cargo llvm-cov -p moino_text -p moino_jobs -p moino_platform -p moino_math -p moino_diagram -p moino_export -p moino_preview --locked --fail-under-lines 80 --lcov --output-path target/l0.lcov
+        run: cargo llvm-cov -p moino_markdown -p moino_document -p moino_editing -p moino_text -p moino_jobs -p moino_platform -p moino_math -p moino_diagram -p moino_export -p moino_preview --locked --fail-under-lines 80 --lcov --output-path target/l0.lcov
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: l0-coverage

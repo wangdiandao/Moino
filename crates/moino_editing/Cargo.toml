@@ -1,0 +1,21 @@
+[package]
+name = "moino_editing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moino_text.workspace = true
+moino_markdown.workspace = true
+moino_document.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+moino_testkit.workspace = true
+proptest.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

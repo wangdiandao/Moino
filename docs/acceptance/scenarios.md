@@ -9,12 +9,13 @@
 |---|---|---|
 | <a id="enter-splits-paragraph"></a>Enter 拆分段落 | [正文](../modules/editing.md#enter) | [edit-basic.yaml](vectors/edit-basic.yaml) |
 | <a id="enter-exits-heading"></a>Enter 退出标题 | [正文](../modules/editing.md#enter) | [edit-basic.yaml](vectors/edit-basic.yaml) |
-| <a id="list-enter"></a>列表 Enter | [正文](../modules/editing.md#enter) | 待补充 |
+| <a id="list-enter"></a>列表 Enter | [正文](../modules/editing.md#enter) | [edit-structural.yaml](vectors/edit-structural.yaml) |
+| <a id="tab-indentation"></a>列表缩进与逻辑选择 | [正文](../modules/editing.md#tab-与缩进) | [edit-structural.yaml](vectors/edit-structural.yaml) |
 | <a id="backspace-merges-blocks"></a>Backspace 合并 | [正文](../modules/editing.md#backspace-与-delete) | [edit-basic.yaml](vectors/edit-basic.yaml) |
-| <a id="syntax-conversion"></a>语法转换 | [正文](../modules/editing.md#交互语法转换) | 待补充 |
-| <a id="automatic-pairing"></a>自动配对 | [正文](../modules/editing.md#自动配对与智能标点) | 待补充 |
+| <a id="syntax-conversion"></a>语法转换 | [正文](../modules/editing.md#交互语法转换) | [edit-structural.yaml](vectors/edit-structural.yaml) |
+| <a id="automatic-pairing"></a>自动配对 | [正文](../modules/editing.md#自动配对与智能标点) | [edit-structural.yaml](vectors/edit-structural.yaml) |
 | <a id="formatting-toggle"></a>格式命令切换 | [正文](../modules/editing.md#格式命令) | [edit-basic.yaml](vectors/edit-basic.yaml) |
-| <a id="ime-composition"></a>IME 组合 | [正文](../modules/editing.md#输入法组合) | 待补充 |
+| <a id="ime-composition"></a>IME 组合 | [正文](../modules/editing.md#输入法组合) | [edit-structural.yaml](vectors/edit-structural.yaml) |
 
 ## 选择与标记展开
 
@@ -66,3 +67,5 @@
 ## 覆盖边界
 
 标记展开场景的数据实际检查位置映射；段落 Enter 场景也关联选区替换。这些既有关系不表示对应行为已充分覆盖，须补全而不能仅靠改名修饰。主题场景中的字号、缩放、双向文字交叉判定还依赖[未决细节](../planned.md#partial-i18n)。
+
+组合提交的文本向量检查提交事务与配对隔离，不验证原生候选窗或界面的临时组合态。

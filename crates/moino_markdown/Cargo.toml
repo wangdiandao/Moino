@@ -1,0 +1,22 @@
+[package]
+name = "moino_markdown"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+moino_text.workspace = true
+pulldown-cmark.workspace = true
+caseless.workspace = true
+finl_unicode.workspace = true
+
+[dev-dependencies]
+comrak.workspace = true
+serde_json.workspace = true
+proptest.workspace = true
+moino_testkit.workspace = true
+
+[lints]
+workspace = true
