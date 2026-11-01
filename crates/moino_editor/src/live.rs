@@ -46,7 +46,7 @@ actions!(
 enum Operation {
     Intent(Intent),
     Source { text: String, selection: Selection },
-    Select(Selection),
+    Select(Selection, moino_document::Revision),
     Navigate { forward: bool, extend: bool },
     Vertical { forward: bool, extend: bool },
     LineEdge { end: bool, extend: bool },
@@ -79,6 +79,7 @@ struct Composition {
     text: String,
     selection: std::ops::Range<usize>,
     follows_pending: bool,
+    revision: moino_document::Revision,
 }
 
 impl LiveEditor {
@@ -150,6 +151,7 @@ impl LiveEditor {
             && composition.follows_pending
         {
             composition.range = self.document.selection().range();
+            composition.revision = self.document.snapshot().revision();
         }
         self.source_text = self.document.snapshot().text().to_string().into();
         let top = self.list.logical_scroll_top();
@@ -276,6 +278,49 @@ impl LiveEditor {
         self.start_next(window, cx);
     }
 
+    fn selection_operation(&self, selected: Selection) -> Operation {
+        Operation::Select(selected, self.document.snapshot().revision())
+    }
+
+    fn map_pending_selections(
+        &mut self,
+        before: moino_document::Revision,
+        edits: &[moino_document::Edit],
+    ) {
+        let after = self.document.snapshot().revision();
+        for operation in &mut self.pending {
+            if let Operation::Select(selected, revision) = operation
+                && *revision == before
+            {
+                *selected = selected.mapped(edits);
+                *revision = after;
+            }
+        }
+        if let Some(composition) = &mut self.composition
+            && composition.revision == before
+            && !composition.follows_pending
+        {
+            composition.range = selection(composition.range.start, composition.range.end)
+                .mapped(edits)
+                .range();
+            composition.revision = after;
+        }
+    }
+
+    fn defer_visual_move(
+        &mut self,
+        operation: Operation,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending.push_front(operation);
+        let editor = cx.entity().downgrade();
+        window.on_next_frame(move |window, cx| {
+            let _ = editor.update(cx, |editor, cx| editor.start_next(window, cx)); // A closed surface has no navigation target.
+        });
+        cx.notify();
+    }
+
     fn start_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.worker.is_some() {
             return;
@@ -309,6 +354,9 @@ impl LiveEditor {
                             }
                             self.refresh(window, cx);
                         }
+                    } else {
+                        self.defer_visual_move(Operation::Vertical { forward, extend }, window, cx);
+                        return;
                     }
                 }
                 Operation::LineEdge { end, extend } => {
@@ -333,6 +381,9 @@ impl LiveEditor {
                             }
                             self.refresh(window, cx);
                         }
+                    } else {
+                        self.defer_visual_move(Operation::LineEdge { end, extend }, window, cx);
+                        return;
                     }
                 }
                 Operation::Navigate { forward, extend } => {
@@ -344,8 +395,10 @@ impl LiveEditor {
                         self.refresh(window, cx);
                     }
                 }
-                Operation::Select(selection) => {
-                    if let Err(error) = self.document.set_selection(selection) {
+                Operation::Select(selection, revision) => {
+                    if revision != self.document.snapshot().revision() {
+                        self.error = Some("document.stale".into());
+                    } else if let Err(error) = self.document.set_selection(selection) {
                         self.error = Some(error.code().into());
                     }
                     self.refresh(window, cx);
@@ -356,6 +409,7 @@ impl LiveEditor {
                     let selection = self.document.selection();
                     let options = self.options.clone();
                     let now = cx.background_executor().now().duration_since(self.started);
+                    let before = snapshot.revision();
                     self.worker = Some(cx.spawn_in(window, async move |this, cx| {
                         let result = cx
                             .background_spawn(async move {
@@ -378,6 +432,10 @@ impl LiveEditor {
                                     }
                                     _ => unreachable!("only edit operations reach derivation"),
                                 };
+                                let edits =
+                                    transaction.as_ref().map_or_else(Vec::new, |transaction| {
+                                        transaction.edits().to_vec()
+                                    });
                                 let prepared = transaction
                                     .map(|transaction| {
                                         transaction
@@ -386,22 +444,23 @@ impl LiveEditor {
                                     })
                                     .transpose()
                                     .map_err(|error| error.code().to_owned())?;
-                                Ok::<_, String>((prepared, selection))
+                                Ok::<_, String>((prepared, selection, edits))
                             })
                             .await;
                         let _ = this.update_in(cx, |this, window, cx| {
                             this.worker = None;
                             match result {
-                                Ok((Some(prepared), _)) => {
+                                Ok((Some(prepared), _, edits)) => {
                                     if let Err(error) = this.document.commit_prepared(prepared, now)
                                     {
                                         this.error = Some(error.code().into());
                                         this.pending.clear();
                                     } else {
                                         this.error = None;
+                                        this.map_pending_selections(before, &edits);
                                     }
                                 }
-                                Ok((None, selection)) => {
+                                Ok((None, selection, _)) => {
                                     if let Err(error) = this.document.set_selection(selection) {
                                         this.error = Some(error.code().into());
                                     }
@@ -446,7 +505,10 @@ impl LiveEditor {
         if let Some(composition) = self.composition.take() {
             if !composition.follows_pending {
                 self.enqueue(
-                    Operation::Select(selection(composition.range.start, composition.range.end)),
+                    self.selection_operation(selection(
+                        composition.range.start,
+                        composition.range.end,
+                    )),
                     window,
                     cx,
                 );
@@ -461,7 +523,7 @@ impl LiveEditor {
 
     fn select(&mut self, value: Selection, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_composition(window, cx);
-        self.enqueue(Operation::Select(value), window, cx);
+        self.enqueue(self.selection_operation(value), window, cx);
     }
 
     fn hit(&self, point: Point<Pixels>) -> Option<ScalarOffset> {

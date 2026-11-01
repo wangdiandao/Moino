@@ -1,6 +1,53 @@
 use super::{LiveEditor, Options};
 use gpui_kit::test::{TestInput, TestWindowExt};
-use gpui_kit::{AnyWindowHandle, AppContext, ElementInputHandler, Entity, TestAppContext};
+use gpui_kit::{
+    AnyWindowHandle, AppContext, ElementInputHandler, Entity, EntityInputHandler, TestAppContext,
+};
+
+#[gpui_kit::test]
+// Spec: docs/contracts/document-model.md#选择与映射
+fn queued_native_selection_maps_through_earlier_edits(cx: &mut TestAppContext) {
+    let (handle, editor) = open(cx, "hello");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.input("x", cx);
+        editor.update(cx, |editor, cx| {
+            editor.set_selected_text_range(0..0, window, cx)
+        });
+        window.input("y", cx);
+    })
+    .expect("queued input and native selection");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(editor.read(cx).snapshot().text().to_string(), "xyhello");
+        assert!(editor.read(cx).error_code().is_none());
+    });
+}
+
+#[gpui_kit::test]
+// Spec: docs/modules/selection.md#逻辑选择
+fn vertical_navigation_waits_for_committed_geometry(cx: &mut TestAppContext) {
+    let (handle, editor) = open(cx, "a\nb");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.input("x", cx);
+        window.press("down", cx);
+    })
+    .expect("queued vertical navigation");
+    cx.run_until_parked();
+    for _ in 0..3 {
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+        })
+        .expect("navigation geometry");
+    }
+    cx.update(|cx| {
+        assert_eq!(editor.read(cx).snapshot().text().to_string(), "xa\nb");
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 4);
+        assert!(!editor.read(cx).is_pending());
+    });
+}
 
 fn open(cx: &mut TestAppContext, text: &'static str) -> (AnyWindowHandle, Entity<LiveEditor>) {
     cx.update(|cx| {

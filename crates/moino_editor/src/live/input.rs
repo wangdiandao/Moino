@@ -58,7 +58,7 @@ impl EntityInputHandler for LiveEditor {
         let composing = self.composition.take();
         if let Some(target) = target {
             self.enqueue(
-                Operation::Select(selection(target.start, target.end)),
+                self.selection_operation(selection(target.start, target.end)),
                 window,
                 cx,
             );
@@ -66,7 +66,7 @@ impl EntityInputHandler for LiveEditor {
             && !composition.follows_pending
         {
             self.enqueue(
-                Operation::Select(selection(composition.range.start, composition.range.end)),
+                self.selection_operation(selection(composition.range.start, composition.range.end)),
                 window,
                 cx,
             );
@@ -129,6 +129,7 @@ impl EntityInputHandler for LiveEditor {
             text: normalized,
             selection: selected,
             follows_pending,
+            revision: self.document.snapshot().revision(),
         });
         self.reveal_caret = true;
         self.refresh(window, cx);
