@@ -360,6 +360,10 @@ fn list_indentation_preserves_cursor_and_uses_the_previous_container_width() {
         run("- item\n  tail", 3, 3, Intent::Tab { reverse: true }, false),
         ("item\ntail".to_owned(), 1)
     );
+    assert_eq!(
+        run("10. > - item", 10, 10, Intent::Tab { reverse: true }, false),
+        ("10. > item".to_owned(), 8)
+    );
     let mut doc = Document::new(DocumentId::new(1), Epoch::new(0), "a\nb");
     let selection = Selection::new(
         Endpoint {
