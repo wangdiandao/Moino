@@ -43,8 +43,8 @@
 | <a id="partial-view-modes"></a>[view-modes](modules/view-modes.md) | 专注、打字机、缩放、只读和锁定 |
 | <a id="partial-menus"></a>[menus](modules/menus-dialogs.md) | 顶层和上下文菜单、工具栏、通知与对话框 |
 | <a id="partial-i18n"></a>[i18n](modules/i18n.md) | 双向文字、区域格式与辅助技术交叉行为 |
-| <a id="partial-typography"></a>[typography](design/typography.md) | 代码字号、标题行高、块间距、token 值域与完整后备顺序 |
-| <a id="partial-layout"></a>[layout](design/layout-geometry.md) | 窗口尺寸、区域、档位、断点、覆盖层与滚动几何 |
+| <a id="partial-typography"></a>[typography](design/typography.md) | 块间距、token 值域与完整后备顺序 |
+| <a id="partial-layout"></a>[layout](design/layout-geometry.md) | 窗口尺寸、区域、覆盖层与滚动几何 |
 | <a id="partial-icons"></a>[icons](design/icons.md) | 各具体图标的坐标 |
 | <a id="partial-editing"></a>[editing](modules/editing.md) | 零长度格式意图与标记对的关系 |
 

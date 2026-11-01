@@ -7,6 +7,11 @@ use interprocess::local_socket::{
 use serde::{Deserialize, Serialize};
 use std::io::{self, Read, Write};
 
+/// Most preferred system language, with an English fallback when unavailable.
+pub fn system_language() -> String {
+    sys_locale::get_locale().unwrap_or_else(|| "en".to_owned())
+}
+
 /// Whether this platform uses an in-window menu overlay.
 pub const fn has_window_menu() -> bool {
     !cfg!(target_os = "macos")

@@ -1,0 +1,15 @@
+[package]
+name = "moino_ui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+moino_theme.workspace = true
+rust-i18n.workspace = true
+
+[lints]
+workspace = true

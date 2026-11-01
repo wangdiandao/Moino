@@ -1,0 +1,17 @@
+product.name: Moino
+document.untitled: Untitled
+menu.file: File
+menu.edit: Edit
+menu.view: View
+menu.quit: Quit
+menu.undo: Undo
+menu.redo: Redo
+menu.application: Menu
+mode.source: Source
+mode.preview: Live preview
+status.characters: Characters
+status.unsaved: Unsaved
+status.spelling: Spelling unavailable
+editor.failed: Could not apply the edit
+theme.paper: Paper
+theme.inkstone: Inkstone

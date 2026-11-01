@@ -8,9 +8,17 @@ publish.workspace = true
 
 [dependencies]
 gpui-kit.workspace = true
+moino_text.workspace = true
+moino_markdown.workspace = true
+moino_document.workspace = true
+moino_editing.workspace = true
+moino_theme.workspace = true
+moino_ui.workspace = true
 
 [dev-dependencies]
 gpui-kit = { workspace = true, features = ["test-support"] }
+moino_testkit.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true

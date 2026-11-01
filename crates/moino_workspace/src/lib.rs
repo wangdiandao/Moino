@@ -1,4 +1,6 @@
-//! L3 M0 validation workspace: native window, menu overlay and actual rendering probes.
+//! L3 document windows, shared editing surfaces and isolated M0 rendering probes.
+mod editor_workspace;
+pub use editor_workspace::{EditorWorkspace, run};
 use gpui_kit::component::{ActiveTheme, menu::AppMenuBar};
 use gpui_kit::{prelude::*, *};
 use moino_editor::{DedicatedProbe, PrototypeEditor};

@@ -1,7 +1,15 @@
-//! L2 editor_host input and geometry prototype; only GPUI Kit is used at this seam.
+//! L2 native live/source editing, block projection and input geometry over the document core.
 mod accessibility;
+pub mod commands;
 mod dedicated;
 mod input;
+mod live;
+mod live_surface;
+mod projection;
+mod source;
+mod source_highlight;
+pub use live::{LiveEditor, Redo, Undo};
+pub use source::SourceEditor;
 mod surface;
 pub use dedicated::DedicatedProbe;
 
@@ -127,6 +135,7 @@ impl PrototypeEditor {
 
 /// Registers the prototype's input actions once at application startup.
 pub fn init(cx: &mut App) {
+    live::init(cx);
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, Some("MoinoPrototype")),
         KeyBinding::new("enter", Enter, Some("MoinoPrototype")),

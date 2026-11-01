@@ -64,6 +64,7 @@
 | `image` | MIT OR Apache-2.0 |
 | `resvg` | Apache-2.0 OR MIT |
 | `rust-i18n` | MIT |
+| `sys-locale`（系统语言读取，与既有传递依赖版本对齐） | MIT OR Apache-2.0 |
 | `tracing` | MIT |
 | `thiserror`、`anyhow` | MIT OR Apache-2.0 |
 | `pulldown-cmark`（语法后端） | MIT |
@@ -78,8 +79,8 @@
 
 | 资源 | 用途 | 许可证 |
 |---|---|---|
-| [Inter](https://github.com/rsms/inter) | 正文与界面字体 | SIL OFL 1.1 |
-| [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | 代码字体 | SIL OFL 1.1 |
+| [Inter 4.1](https://github.com/rsms/inter/releases/tag/v4.1)（未修改的 Regular、Italic、Bold、BoldItalic TTF） | 正文与界面字体 | [SIL OFL 1.1](../assets/fonts/inter-ofl.txt) |
+| [JetBrains Mono 2.304](https://github.com/JetBrains/JetBrainsMono/tree/v2.304)（未修改的 Regular、Italic、Bold、BoldItalic TTF） | 代码字体 | [SIL OFL 1.1](../assets/fonts/jetbrains-mono-ofl.txt) |
 | KaTeX 字体（随 RaTeX 提供） | 数学字体 | SIL OFL 1.1 |
 | Libertinus Serif（取自固定 `typst-assets 0.15.1`，未修改） | M0 PDF 固定样本字体；不替代产品字体选择 | [SIL OFL 1.1](../assets/fonts/libertinus-ofl.txt) |
 | CommonMark 0.31.2 官方示例 | 仅开发用一致性输入与预期，不随产品分发 | [CC BY-SA 4.0 与来源声明](../crates/moino_markdown/tests/fixtures/README.md) |
