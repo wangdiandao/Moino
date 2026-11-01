@@ -44,6 +44,8 @@ jobs:
         run: cargo test --workspace --all-targets --locked
       - name: Documentation tests
         run: cargo test --workspace --doc --locked
+      - name: Native editor build
+        run: cargo build -p moino --locked
       - name: Repository checks
         shell: bash
         run: |

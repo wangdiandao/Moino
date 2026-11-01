@@ -2561,8 +2561,7 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d862bc8f2e27710039013d075ac4995892e9687ff207fa530f880cbcd513936f"
+source = "git+https://github.com/wangdiandao/gpui-kit?rev=d6f69648d0d8150a1125fd3e3efd49e1878cc3ee#d6f69648d0d8150a1125fd3e3efd49e1878cc3ee"
 dependencies = [
  "aho-corasick",
  "anyhow",
@@ -5255,6 +5254,14 @@ name = "moino_editor"
 version = "0.0.0"
 dependencies = [
  "gpui-kit",
+ "moino_document",
+ "moino_editing",
+ "moino_markdown",
+ "moino_testkit",
+ "moino_text",
+ "moino_theme",
+ "moino_ui",
+ "serde_json",
 ]
 
 [[package]]
@@ -5305,6 +5312,7 @@ dependencies = [
  "interprocess",
  "serde",
  "serde_json",
+ "sys-locale",
 ]
 
 [[package]]
@@ -5338,6 +5346,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "moino_theme"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+]
+
+[[package]]
+name = "moino_ui"
+version = "0.0.0"
+dependencies = [
+ "gpui-kit",
+ "moino_theme",
+ "rust-i18n",
+]
+
+[[package]]
 name = "moino_workspace"
 version = "0.0.0"
 dependencies = [
@@ -5348,6 +5372,8 @@ dependencies = [
  "moino_math",
  "moino_platform",
  "moino_preview",
+ "moino_theme",
+ "moino_ui",
 ]
 
 [[package]]

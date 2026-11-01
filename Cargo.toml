@@ -24,6 +24,8 @@ moino_jobs = { path = "crates/moino_jobs" }
 moino_testkit = { path = "crates/moino_testkit" }
 moino_platform = { path = "crates/moino_platform" }
 moino_editor = { path = "crates/moino_editor" }
+moino_theme = { path = "crates/moino_theme" }
+moino_ui = { path = "crates/moino_ui" }
 moino_workspace = { path = "crates/moino_workspace" }
 moino_math = { path = "crates/moino_math" }
 moino_diagram = { path = "crates/moino_diagram" }
@@ -37,6 +39,8 @@ serde_json = "=1.0.154"
 toml = "=1.1.8"
 pulldown-cmark = "=0.13.5"
 tracing = "=0.1.44"
+rust-i18n = "=4.2.4"
+sys-locale = "=0.3.2"
 gpui-kit = { version = "=0.8.1", default-features = false, features = ["component", "syntect"] }
 interprocess = "=2.4.7"
 ratex-parser = "=0.1.15"
@@ -68,3 +72,7 @@ debug = "limited"
 
 [profile.release]
 strip = "symbols"
+
+# Temporary M2 editor-host seams; removal is tracked in Moino #17.
+[patch.crates-io]
+gpui-base = { git = "https://github.com/wangdiandao/gpui-kit", rev = "d6f69648d0d8150a1125fd3e3efd49e1878cc3ee" }

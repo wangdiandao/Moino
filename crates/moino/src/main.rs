@@ -1,4 +1,4 @@
-//! M0 native validation window; not a released editor.
+//! Native Markdown editing application.
 fn main() {
-    moino_workspace::run_prototype();
+    moino_workspace::run();
 }
