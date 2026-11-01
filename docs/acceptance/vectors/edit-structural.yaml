@@ -76,3 +76,64 @@
   action: 'composition:"("'
   expected: (█
   description: 已提交组合文本按一次普通事务插入，不触发配对
+
+- name: tab-keeps-cursor-inside-list-item
+  specs: [../../modules/editing.md#tab-与缩进]
+  scenario: tab-indentation
+  input: |-
+    - prev
+    - it█em
+  action: tab
+  expected: |-
+    - prev
+      - it█em
+  description: 列表 Tab 按上一项容器宽度缩进，保留正文内的光标
+
+- name: tab-without-previous-item-keeps-source
+  specs: [../../modules/editing.md#tab-与缩进]
+  scenario: tab-indentation
+  input: '- it█em'
+  action: tab
+  expected: '- it█em'
+  description: 没有上一同级项时 Tab 不生成文本事务
+
+- name: shift-tab-unlists-root-item
+  specs: [../../modules/editing.md#tab-与缩进]
+  scenario: tab-indentation
+  input: '- it█em'
+  action: shift-tab
+  expected: it█em
+  description: 根层列表项降级移除标记并保留逻辑光标
+
+- name: backspace-keeps-literal-code-marker
+  specs: [../../modules/editing.md#输入路由, ../../modules/editing.md#backspace-与-delete]
+  scenario: backspace-merges-blocks
+  input: |-
+    ```
+    - █item
+    ```
+  action: backspace
+  expected: |-
+    ```
+    -█item
+    ```
+  description: 代码内类似列表的文本按字素删除，不执行列表降级
+
+- name: empty-link-pair-becomes-link-structure
+  specs: [../../modules/editing.md#交互语法转换]
+  scenario: syntax-conversion
+  input: '[█]'
+  action: 'type:"]" (auto_pair=true)'
+  expected: '[█]()'
+  description: 空括号对立即补全链接结构
+
+- name: fence-trigger-opens-code-block
+  specs: [../../modules/editing.md#交互语法转换]
+  scenario: syntax-conversion
+  input: '``█'
+  action: 'type:"`" (auto_pair=true)'
+  expected: |-
+    ```
+    █
+    ```
+  description: 行首第三个反引号建立围栏并把光标放在源码行

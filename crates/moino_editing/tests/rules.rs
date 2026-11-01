@@ -15,6 +15,7 @@ fn run(source: &str, start: usize, end: usize, intent: Intent, pair: bool) -> (S
             affinity: Affinity::After,
         },
     );
+    doc.set_selection(selection).expect("initial selection");
     let options = Options::new("  ", pair).expect("options");
     let outcome = resolve(&doc.snapshot(), selection, intent, &options).expect("resolve");
     let caret = outcome.selection().head().offset.value();
@@ -62,6 +63,22 @@ fn deletion_uses_graphemes_and_preserves_atomic_selection_replacement() {
             (expected.to_owned(), caret)
         );
     }
+    assert_eq!(
+        run("para\n2. item", 8, 8, Intent::Backspace, false).0,
+        "para\n2.item"
+    );
+    assert_eq!(
+        run("```\n- item\n```", 6, 6, Intent::Backspace, false).0,
+        "```\n-item\n```"
+    );
+    assert_eq!(
+        run("```\na\n# literal\n```", 5, 5, Intent::Delete, false).0,
+        "```\na# literal\n```"
+    );
+    assert_eq!(
+        run("---\n- item\n---", 6, 6, Intent::Backspace, false).0,
+        "---\n-item\n---"
+    );
 }
 #[test]
 // Spec: docs/modules/editing.md#tab-与缩进
@@ -72,11 +89,11 @@ fn indentation_and_block_formats_toggle() {
     );
     assert_eq!(
         run("- a", 3, 3, Intent::Tab { reverse: false }, false).0,
-        "  - a"
+        "- a"
     );
     assert_eq!(
         run("  - a", 5, 5, Intent::Tab { reverse: true }, false).0,
-        "- a"
+        "a"
     );
     assert_eq!(
         run("a\nb", 0, 3, Intent::Tab { reverse: false }, false).0,
@@ -212,7 +229,7 @@ fn empty_pairs_upgrade_and_structural_markers_are_deleted_before_content() {
         ("墨".to_owned(), 1)
     );
     assert_eq!(run("[墨](url)", 5, 5, Intent::Backspace, false).0, "墨");
-    assert_eq!(run("  - item", 4, 4, Intent::Backspace, false).0, "- item");
+    assert_eq!(run("  - item", 4, 4, Intent::Backspace, false).0, "item");
     assert_eq!(
         run("# **墨**", 2, 7, Intent::ClearFormatting, false).0,
         "墨"
@@ -243,12 +260,19 @@ fn ordered_enter_renumbers_siblings_and_continues_quoted_lists() {
         "> # title\n> "
     );
     assert_eq!(
-        run("> - item", 8, 8, Intent::Tab { reverse: false }, false).0,
-        ">   - item"
+        run(
+            "> - prev\n> - item",
+            17,
+            17,
+            Intent::Tab { reverse: false },
+            false
+        )
+        .0,
+        "> - prev\n>   - item"
     );
     assert_eq!(
-        run(">   - item", 6, 6, Intent::Backspace, false).0,
-        "> - item"
+        run("> - prev\n>   - item", 15, 15, Intent::Backspace, false).0,
+        "> - prev\n> - item"
     );
 }
 #[test]
@@ -302,5 +326,80 @@ fn table_tab_navigates_and_appends_only_after_last_cell() {
     assert_eq!(
         run(source, last, last, Intent::Tab { reverse: false }, false).0,
         format!("{source}|  |  |\n")
+    );
+}
+#[test]
+// Spec: docs/modules/editing.md#tab-与缩进
+fn list_indentation_preserves_cursor_and_uses_the_previous_container_width() {
+    let source = "9. prev\n10. item";
+    assert_eq!(
+        run(source, 14, 14, Intent::Tab { reverse: false }, false),
+        ("9. prev\n   1. item".to_owned(), 16)
+    );
+    assert_eq!(
+        run(
+            "9. prev\n   1. item",
+            16,
+            16,
+            Intent::Tab { reverse: true },
+            false
+        ),
+        ("9. prev\n1. item".to_owned(), 13)
+    );
+    assert_eq!(
+        run(
+            "- prev\n- item\n  tail",
+            18,
+            18,
+            Intent::Tab { reverse: false },
+            false
+        ),
+        ("- prev\n  - item\n    tail".to_owned(), 22)
+    );
+    assert_eq!(
+        run("- item\n  tail", 3, 3, Intent::Tab { reverse: true }, false),
+        ("item\ntail".to_owned(), 1)
+    );
+    let mut doc = Document::new(DocumentId::new(1), Epoch::new(0), "a\nb");
+    let selection = Selection::new(
+        Endpoint {
+            offset: ScalarOffset::new(3),
+            affinity: Affinity::After,
+        },
+        Endpoint {
+            offset: ScalarOffset::new(0),
+            affinity: Affinity::After,
+        },
+    );
+    doc.set_selection(selection).expect("backward selection");
+    let outcome = resolve(
+        &doc.snapshot(),
+        selection,
+        Intent::Tab { reverse: false },
+        &Options::new("  ", false).expect("options"),
+    )
+    .expect("indent");
+    assert_eq!(outcome.selection().anchor().offset.value(), 7);
+    assert_eq!(outcome.selection().head().offset.value(), 2);
+    doc.commit(outcome.into_transaction().expect("edits"), Duration::ZERO)
+        .expect("commit");
+    doc.undo().expect("undo indentation");
+    assert_eq!(doc.selection(), selection);
+    assert_eq!(doc.snapshot().text().to_string(), "a\nb");
+}
+#[test]
+// Spec: docs/modules/editing.md#backspace-与-delete
+fn heading_backspace_preserves_outer_containers_and_handles_setext_at_document_start() {
+    assert_eq!(
+        run("- # title", 4, 4, Intent::Backspace, false),
+        ("- title".to_owned(), 2)
+    );
+    assert_eq!(
+        run("> # title", 4, 4, Intent::Backspace, false),
+        ("> title".to_owned(), 2)
+    );
+    assert_eq!(
+        run("Title\n===\n", 0, 0, Intent::Backspace, false),
+        ("Title\n".to_owned(), 0)
     );
 }

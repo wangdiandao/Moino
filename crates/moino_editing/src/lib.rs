@@ -1,6 +1,8 @@
 //! L0 view-independent editing intents; depends on text, Markdown and document transactions.
 #![forbid(unsafe_code)]
 
+mod indentation;
+
 use moino_document::{Edit, Origin, Selection, Snapshot, Transaction};
 use moino_markdown::{Node, Syntax};
 use moino_text::{ScalarOffset, normalize_newlines};
@@ -405,39 +407,56 @@ pub fn resolve(
             Ok(replacement(snapshot, range, "", start, Origin::Command))
         }
         Intent::Backspace => {
+            if let Some(heading) = heading_start(snapshot.cst().nodes(), start) {
+                let raw = snapshot
+                    .text()
+                    .slice(heading.raw())
+                    .map_err(|_| EditingError)?;
+                let closing_end = offset(
+                    heading.raw().end.value()
+                        - raw.chars().rev().take_while(|ch| *ch == '\n').count(),
+                );
+                let mut edits = Vec::new();
+                if heading.raw().start < heading.content().start {
+                    edits.push(Edit::new(heading.raw().start..heading.content().start, ""));
+                }
+                if heading.content().end < closing_end {
+                    edits.push(Edit::new(heading.content().end..closing_end, ""));
+                }
+                return Ok(edits_outcome(snapshot, selection, edits));
+            }
             if start == 0 {
                 return Ok(navigation(selection));
             }
             if let Some(node) = marker_boundary(snapshot.cst().nodes(), start, false) {
                 return Ok(remove_markers(snapshot, selection, node));
             }
+            if in_literal(snapshot.cst().nodes(), start) {
+                let previous = snapshot
+                    .text()
+                    .previous_grapheme(offset(start))
+                    .map_err(|_| EditingError)?;
+                return Ok(replacement(
+                    snapshot,
+                    previous..offset(start),
+                    "",
+                    previous.value(),
+                    Origin::Command,
+                ));
+            }
             if prefix > 0 && start == line_start + prefix {
-                let quote = quote_prefix_width(&line);
-                let indent = line[quote..]
-                    .chars()
-                    .take_while(|ch| *ch == ' ' || *ch == '\t')
-                    .count();
-                if is_list(&line.chars().take(prefix).collect::<String>()) {
-                    let amount = if indent > 0 {
-                        indent.min(options.indent.chars().count())
-                    } else {
-                        prefix - quote
-                    };
+                if let Some(outcome) = indentation::list_tab(snapshot, selection, &chars, true) {
+                    return Ok(outcome);
+                }
+                if !text_intersects(snapshot.cst().nodes(), line_start, start) {
                     return Ok(replacement(
                         snapshot,
-                        offset(line_start + quote)..offset(line_start + quote + amount),
+                        offset(line_start)..offset(start),
                         "",
-                        start - amount,
+                        line_start,
                         Origin::Command,
                     ));
                 }
-                return Ok(replacement(
-                    snapshot,
-                    offset(line_start)..offset(start),
-                    "",
-                    line_start,
-                    Origin::Command,
-                ));
             }
             if start == line_start {
                 let mut previous = start - 1;
@@ -470,6 +489,19 @@ pub fn resolve(
             }
             if let Some(node) = marker_boundary(snapshot.cst().nodes(), start, true) {
                 return Ok(remove_markers(snapshot, selection, node));
+            }
+            if in_literal(snapshot.cst().nodes(), start) {
+                let next = snapshot
+                    .text()
+                    .next_grapheme(offset(start))
+                    .map_err(|_| EditingError)?;
+                return Ok(replacement(
+                    snapshot,
+                    offset(start)..next,
+                    "",
+                    start,
+                    Origin::Command,
+                ));
             }
             let mut next = snapshot
                 .text()
@@ -526,17 +558,13 @@ pub fn resolve(
                     ));
                 }
             }
-            let last_line_start = if end > start && chars.get(end - 1) == Some(&'\n') {
-                end - 1
-            } else {
-                end
-            };
-            let end_line = chars[last_line_start..]
-                .iter()
-                .position(|ch| *ch == '\n')
-                .map_or(chars.len(), |i| last_line_start + i);
-            if start == end && !is_list(&line.chars().take(prefix).collect::<String>()) && !reverse
+            if start == end
+                && !in_literal(snapshot.cst().nodes(), start)
+                && let Some(outcome) = indentation::list_tab(snapshot, selection, &chars, reverse)
             {
+                return Ok(outcome);
+            }
+            if start == end && !reverse {
                 return Ok(replacement(
                     snapshot,
                     range,
@@ -545,31 +573,34 @@ pub fn resolve(
                     Origin::Command,
                 ));
             }
+            let last_line_start = if end > start && chars.get(end - 1) == Some(&'\n') {
+                end - 1
+            } else {
+                end
+            };
+            let end_line = chars[last_line_start..]
+                .iter()
+                .position(|ch| *ch == '\n')
+                .map_or(chars.len(), |index| last_line_start + index);
             let selected: String = chars[line_start..end_line].iter().collect();
-            let replacement_text = selected
-                .split('\n')
-                .map(|line| {
-                    let quote = quote_prefix_width(line);
-                    let (container, body) = line.split_at(quote);
-                    if reverse {
-                        format!(
-                            "{container}{}",
-                            body.strip_prefix(&options.indent).unwrap_or(body)
-                        )
-                    } else {
-                        format!("{container}{}{body}", options.indent)
+            let mut cursor = line_start;
+            let mut edits = Vec::new();
+            for line in selected.split('\n') {
+                let quote = quote_prefix_width(line);
+                let point = offset(cursor + quote);
+                if reverse {
+                    if line[quote..].starts_with(&options.indent) {
+                        edits.push(Edit::new(
+                            point..offset(point.value() + options.indent.chars().count()),
+                            "",
+                        ));
                     }
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            let caret = line_start + replacement_text.chars().count();
-            Ok(replacement(
-                snapshot,
-                offset(line_start)..offset(end_line),
-                &replacement_text,
-                caret,
-                Origin::Command,
-            ))
+                } else {
+                    edits.push(Edit::new(point..point, &options.indent));
+                }
+                cursor += line.chars().count() + 1;
+            }
+            Ok(edits_outcome(snapshot, selection, edits))
         }
         Intent::Inline(format) => {
             let marker = format.marker();
@@ -690,6 +721,28 @@ pub fn resolve(
             })
         }
     }
+}
+fn text_intersects(nodes: &[Node], start: usize, end: usize) -> bool {
+    nodes.iter().any(|node| {
+        node.raw().start.value() < end
+            && start < node.raw().end.value()
+            && (node.syntax() == &Syntax::Text || text_intersects(node.children(), start, end))
+    })
+}
+fn heading_start(nodes: &[Node], position: usize) -> Option<&Node> {
+    for node in nodes {
+        if node.raw().start.value() <= position && position <= node.raw().end.value() {
+            if let Some(heading) = heading_start(node.children(), position) {
+                return Some(heading);
+            }
+            if matches!(node.syntax(), Syntax::Heading(_))
+                && node.content().start.value() == position
+            {
+                return Some(node);
+            }
+        }
+    }
+    None
 }
 fn text_block(nodes: &[Node], position: usize, document_end: usize) -> Option<&Node> {
     for node in nodes {
@@ -829,6 +882,20 @@ fn convert_text_block(
         new_caret,
         Origin::Command,
     )))
+}
+fn edits_outcome(snapshot: &Snapshot, selection: Selection, edits: Vec<Edit>) -> Outcome {
+    if edits.is_empty() {
+        return navigation(selection);
+    }
+    let selection = selection.mapped(&edits);
+    let mut transaction = Transaction::new(snapshot, Origin::Command).with_selection(selection);
+    for edit in edits {
+        transaction = transaction.with_edit(edit);
+    }
+    Outcome {
+        transaction: Some(transaction),
+        selection,
+    }
 }
 fn containing_table(nodes: &[Node], position: usize) -> Option<&Node> {
     for node in nodes {
@@ -1108,7 +1175,11 @@ fn in_literal(nodes: &[Node], position: usize) -> bool {
             && position < node.raw().end.value()
             && (matches!(
                 node.syntax(),
-                Syntax::CodeBlock(_) | Syntax::MathBlock | Syntax::HtmlBlock | Syntax::Code
+                Syntax::CodeBlock(_)
+                    | Syntax::MathBlock
+                    | Syntax::HtmlBlock
+                    | Syntax::FrontMatter
+                    | Syntax::Code
             ) || in_literal(node.children(), position))
     })
 }

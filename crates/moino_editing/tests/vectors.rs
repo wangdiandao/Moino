@@ -121,6 +121,8 @@ fn executes_editing_and_history_vectors() {
             } else {
                 match action {
                     "enter" => Intent::Enter,
+                    "tab" => Intent::Tab { reverse: false },
+                    "shift-tab" => Intent::Tab { reverse: true },
                     "backspace" => Intent::Backspace,
                     "edit.clearFormatting" => Intent::ClearFormatting,
                     "inline.bold" => Intent::Inline(InlineFormat::Bold),
@@ -164,7 +166,7 @@ fn executes_editing_and_history_vectors() {
         }
         count += 1;
     }
-    assert_eq!(count, 20);
+    assert_eq!(count, 26);
 }
 #[test]
 // Spec: docs/contracts/document-model.md#选择与映射
