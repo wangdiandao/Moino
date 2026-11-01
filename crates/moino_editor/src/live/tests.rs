@@ -216,7 +216,7 @@ fn composition_follows_queued_typing_and_explicit_preedit_ranges(cx: &mut TestAp
 #[gpui_kit::test]
 // Spec: docs/modules/selection.md#滚动保障
 fn long_documents_only_layout_visible_leaves_and_reveal_remote_cursors(cx: &mut TestAppContext) {
-    let source = "paragraph\n\n".repeat(1000);
+    let source = "A paragraph whose line wraps when the window becomes narrow, preserving its block anchor.\n\n".repeat(1000);
     cx.update(|cx| {
         gpui_kit::init(cx);
         moino_theme::register_fonts(cx).expect("bundled test fonts");
@@ -300,4 +300,33 @@ fn long_documents_only_layout_visible_leaves_and_reveal_remote_cursors(cx: &mut 
         assert!(caret.top() >= viewport.top() && caret.bottom() <= viewport.bottom());
         assert!(editor.geometry.borrow().len() < 100);
     });
+    let anchor = cx
+        .update_window(handle, |_, window, cx| {
+            editor.update(cx, |editor, _| {
+                editor.reveal_caret = false;
+                editor.list.scroll_to(gpui_kit::ListOffset {
+                    item_ix: 500,
+                    offset_in_item: gpui_kit::px(5.),
+                });
+            });
+            window.render_frame(cx);
+            let editor = editor.read(cx);
+            let top = editor.list.logical_scroll_top();
+            (editor.leaves[top.item_ix].key, top.offset_in_item)
+        })
+        .expect("middle scroll anchor");
+    cx.update(|cx| moino_theme::apply(moino_theme::BuiltinTheme::Inkstone, cx));
+    cx.simulate_window_resize(
+        handle,
+        gpui_kit::size(gpui_kit::px(380.), gpui_kit::px(600.)),
+    );
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let editor = editor.read(cx);
+        let top = editor.list.logical_scroll_top();
+        assert_eq!(editor.leaves[top.item_ix].key, anchor.0);
+        assert!((top.offset_in_item - anchor.1).abs() <= gpui_kit::px(1.));
+        assert!(editor.geometry.borrow().len() < 100);
+    })
+    .expect("theme and width retain scroll anchor");
 }
