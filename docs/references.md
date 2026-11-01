@@ -66,7 +66,10 @@
 | `rust-i18n` | MIT |
 | `tracing` | MIT |
 | `thiserror`、`anyhow` | MIT OR Apache-2.0 |
-| `pulldown-cmark`（仅开发依赖） | MIT |
+| `pulldown-cmark`（语法后端） | MIT |
+| `caseless` | MIT |
+| `finl_unicode` | (MIT OR Apache-2.0) AND Unicode-DFS-2016 |
+| `comrak`（仅开发依赖，独立 CommonMark 差分参考） | BSD-2-Clause |
 | `proptest`（仅开发依赖） | MIT OR Apache-2.0 |
 | `insta`（仅开发依赖） | Apache-2.0 |
 | `cargo-packager`（工具） | Apache-2.0 OR MIT |
@@ -79,6 +82,7 @@
 | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | 代码字体 | SIL OFL 1.1 |
 | KaTeX 字体（随 RaTeX 提供） | 数学字体 | SIL OFL 1.1 |
 | Libertinus Serif（取自固定 `typst-assets 0.15.1`，未修改） | M0 PDF 固定样本字体；不替代产品字体选择 | [SIL OFL 1.1](../assets/fonts/libertinus-ofl.txt) |
+| CommonMark 0.31.2 官方示例 | 仅开发用一致性输入与预期，不随产品分发 | [CC BY-SA 4.0 与来源声明](../crates/moino_markdown/tests/fixtures/README.md) |
 | Hunspell `en_US` 词典（基于 SCOWL） | 随包拼写词典 | 以随包附带的许可证文本为准，打包前逐项核对 |
 
 ## 许可边界

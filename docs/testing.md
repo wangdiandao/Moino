@@ -10,7 +10,7 @@
 |---|---|---|
 | 单元测试 | 每个 crate 的内部逻辑 | 模块内 `#[cfg(test)]` |
 | 属性测试 | L0 不变量：文本缓冲与偏移转换、事务与反向编辑、选择映射、增量解析与全量解析一致、节点 ID 稳定 | `proptest` |
-| 一致性测试 | [声明方言](contracts/markdown-dialect.md#基础方言与扩展)的规范样例；与 `pulldown-cmark` 作语义结构差分 | `crates/moino_markdown/tests/`（规划中） |
+| 一致性测试 | [声明方言](contracts/markdown-dialect.md#基础方言与扩展)的规范样例；以官方规范样例校验，与独立参考实现作语义结构差分 | `crates/moino_markdown/tests/`（规划中） |
 | 向量测试 | `docs/acceptance/vectors/*.yaml` 中的文本、时序与几何样例 | `moino_testkit` 读取 YAML 生成测试 |
 | 界面集成测试 | 真实组件在无头窗口中运行，模拟键盘、指针与滚动，断言状态、焦点、布局与无障碍属性 | `#[gpui_kit::test]` 与 GPUI Kit 测试工具，启用 `gpui-kit/test-support` |
 | 快照测试 | 语义 JSON、HTML 导出、设置导出、诊断文本 | `insta` |
@@ -22,6 +22,8 @@
 单元测试在模块内，跨模块测试在 `crates/<crate>/tests/`；名称表达行为和条件，非显然断言链接契约。只测公开接口，内部观察仅经 `test-support` 特性。
 
 全部计时用受控时钟：界面推进 GPUI 测试执行器，L0 用 testkit，不真实 sleep；后台任务由测试控制完成顺序以检查过期提交。固定文档、设置、字体和内置浅色主题，显式条件遵循[向量格式](acceptance/README.md#向量字段)。
+
+Markdown 基础语法用固定的官方 CommonMark 示例校验；HTML 比较只规范化等价的引号转义及列表项和块标签之间的排版空白，不执行 HTML。独立 comrak 差分使用组合生成的共享语法子集；跨行代码空白等参考实现分歧由明确回归断言判定，不据此修改产品语义。另以包含 Unicode、Tab 和残缺标记的任意输入及随机区间替换检查无损性、完整树形、原始 / 内容区间、锚点、节点身份唯一性和增量 / 全量等价。
 
 ## CI 门禁
 

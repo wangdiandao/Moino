@@ -8,7 +8,7 @@
 |---|---|---|---|
 | `moino_jobs` | L0 | 任务身份、取消令牌、期限、优先级、时钟抽象、防抖与节流 | 无 |
 | `moino_text` | L0 | 文本缓冲（ropey）、标量 / 字节 / UTF-16 偏移、字素与词边界、换行规范化 | 无 |
-| `moino_markdown` | L0 | 无损增量 CST 解析器、方言扩展、标记区间、锚点算法、引用标签规范化 | `moino_text` |
+| `moino_markdown` | L0 | 基于 pulldown-cmark 的无损增量 CST、方言扩展、标记区间、锚点算法、引用标签规范化 | `moino_text` |
 | `moino_document` | L0 | 文档记录、块树与节点 ID、事务、选择与映射、历史、脏状态 | `moino_text`、`moino_markdown` |
 | `moino_editing` | L0 | 编辑规则：Enter / Backspace / Tab、交互语法转换、格式命令、自动配对、表格结构命令 | `moino_text`、`moino_markdown`、`moino_document` |
 | `moino_search` | L0 | 文档查找替换、正则预算、快速打开排序、工作区内容搜索 | `moino_text`、`moino_jobs` |
@@ -56,6 +56,8 @@ IPC 同步原型以非阻塞监听接受连接，再显式将已接受流设为�
 
 主线程负责输入、事务提交、布局和绘制，不做阻塞 I/O、全文解析、搜索、数学图表布局、导出、哈希与解码。单批派生工作连续占用不得超过 8 ms，超出时在事务边界让出。
 
+文档核心的 `Transaction::prepare` 与 `HistoryRequest::prepare` 在离线快照上完成文本应用、解析和不变量检查；界面经后台执行器调用，再在前台以 `commit_prepared` 或 `apply_history` 校验身份并发布。同步 `commit`、`undo`、`redo` 是无界面便捷入口；全文失效或较重历史重放不能从界面线程调用这些入口。
+
 异步工作携带所有者、身份、取消令牌与期限，提交前重新校验文档、世代、修订及适用的主题版本。期限只在前台且事件循环可运行时有效；阻塞、休眠或调度延迟不能被当作计时参数变化，恢复后先校验身份。L0 只经 `moino_jobs` 的时钟与调度抽象使用时间，不直接调用系统时钟或 sleep；上层适配 GPUI 执行器，完整任务状态见[预留范围](planned.md#jobs)。
 
 启动顺序为 `gpui_kit::application()` → 读取有效设置 → `gpui_kit::init` 与主题投影 → 注册命令快捷键 → 单实例监听 → 检查恢复记录 → `gpui_kit::open_window`。不直接构造 `Root`；关闭流程仍需在[持久化](planned.md#persistence)补全。
@@ -99,7 +101,8 @@ IPC 同步原型以非阻塞监听接受连接，再显式将已接受流设为�
 | 图片 | `image`、`resvg`（GPUI Kit 同版本） | `moino_preview`、`moino_editor` |
 | 本地化 | `rust-i18n`（GPUI Kit 同版本） | L2 以上 |
 | 日志 | `tracing` | 全部 |
-| 差分测试 | `pulldown-cmark`（仅 dev-dependency） | `moino_markdown` |
+| Markdown 语法 | `pulldown-cmark =0.13.5` | `moino_markdown` |
+| 独立差分参考 | `comrak =0.59.0`（仅 dev-dependency） | `moino_markdown` |
 
 
 ## 基础设施

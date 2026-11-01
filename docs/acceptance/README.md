@@ -22,13 +22,16 @@ YAML 根为列表，示例直接看[段落 Enter 数据](vectors/edit-basic.yaml
 
 `input` 与 `expected` 可以是空字符串，表示空文档或空结果，不能省略字段；其他字符串字段非空。加载器对缺失字段或类型错误返回诊断，不 panic。
 
+核心文本执行器按 `action` 顺序执行逗号或 `then` 分隔的操作：`insert:"文本"` 为无交互转换的输入；`type:"文本" (auto_pair=true)` 显式启用键盘配对和语法转换；`composition:"文本"` 为已提交组合文本；`(group=1)` 表示同一连续输入键。未指定输入组的操作独立成组。解析数据的 `expected` 是只列出所需断言字段的简化结构投影，不能用它替代无损性和区间检查。
+
 ## 正式数据
 
 | 文件 | 范围 |
 |---|---|
 | [edit-basic.yaml](vectors/edit-basic.yaml) | Enter、Backspace、粗体、选区替换、块转换 |
+| [edit-structural.yaml](vectors/edit-structural.yaml) | 段落分隔、配对升级、整段格式、列表编号与组合提交 |
 | [md-basic.yaml](vectors/md-basic.yaml) | 块、内联、表格、扩展与残缺语法 |
 | [sel-basic.yaml](vectors/sel-basic.yaml) | 选择方向与位置映射 |
 | [hist-basic.yaml](vectors/hist-basic.yaml) | 撤销重做、合并与重做栈 |
 
-规划中的 testkit 读取以上数据。正常路径、错误、取消、超时、竞态和资源耗尽都须覆盖，实际缺口见[覆盖边界](scenarios.md#覆盖边界)；不能把关联名称或数据存在当作通过。
+testkit 读取以上数据，核心集成测试执行文本产品断言。正常路径、错误、取消、超时、竞态和资源耗尽都须覆盖，实际缺口见[覆盖边界](scenarios.md#覆盖边界)；不能把关联名称或数据存在当作通过。

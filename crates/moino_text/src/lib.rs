@@ -60,7 +60,7 @@ pub fn normalize_newlines(text: &str) -> String {
 }
 
 /// A cheap-to-clone rope snapshot containing only LF-normalized UTF-8 text.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TextBuffer {
     rope: ropey::Rope,
 }

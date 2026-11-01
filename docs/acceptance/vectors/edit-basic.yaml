@@ -10,6 +10,7 @@
   action: enter
   expected: |
     Hello world
+
     █
   description: >
     段落末尾 Enter 在下方新建段落
@@ -22,6 +23,7 @@
   action: enter
   expected: |
     # Hello
+
     █
   description: >
     标题末尾 Enter 退出为同级段落
