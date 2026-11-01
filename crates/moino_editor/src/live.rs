@@ -333,13 +333,19 @@ impl LiveEditor {
                     let current = self.document.selection();
                     if let Some(caret) = self.caret(current.head().offset) {
                         let x = *self.preferred_x.get_or_insert(caret.left());
+                        let line_height = self
+                            .geometry
+                            .borrow()
+                            .values()
+                            .find(|geometry| geometry.bounds().contains(&caret.origin))
+                            .map_or(caret.size.height, LeafGeometry::line_height);
                         let target = point(
                             x,
                             caret.top()
                                 + if forward {
-                                    caret.size.height * 1.6
+                                    line_height * 1.5
                                 } else {
-                                    -caret.size.height * 0.6
+                                    -line_height * 0.5
                                 },
                         );
                         if let Some(head) = self.hit(target) {
