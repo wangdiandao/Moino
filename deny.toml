@@ -25,5 +25,5 @@ allow-wildcard-paths = true
 [sources]
 unknown-registry = "deny"
 unknown-git = "deny"
-# Scoped editor-host foreground patch, tracked in Moino #17.
+# Scoped M2 editor-host patch, tracked in Moino #17.
 allow-git = ["https://github.com/wangdiandao/gpui-kit"]

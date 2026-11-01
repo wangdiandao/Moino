@@ -73,6 +73,6 @@ debug = "limited"
 [profile.release]
 strip = "symbols"
 
-# Temporary host text-foreground seam; removal is tracked in Moino #17.
+# Temporary M2 editor-host seams; removal is tracked in Moino #17.
 [patch.crates-io]
 gpui-base = { git = "https://github.com/wangdiandao/gpui-kit", rev = "d6f69648d0d8150a1125fd3e3efd49e1878cc3ee" }
