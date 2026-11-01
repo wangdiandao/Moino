@@ -25,6 +25,30 @@ fn queued_native_selection_maps_through_earlier_edits(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+// Spec: docs/modules/editing.md#输入法组合
+fn moving_the_native_caret_commits_preedit_before_selecting_display_coordinates(
+    cx: &mut TestAppContext,
+) {
+    let (handle, editor) = open(cx, "");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let bounds = window.find("document-editor").bounds();
+        let mut input = TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window);
+        input.compose_text(None, "中", Some(1..1), cx);
+    })
+    .expect("preedit");
+    cx.update_window(handle, |_, window, cx| {
+        editor.update(cx, |editor, cx| {
+            editor.set_selected_text_range(0..0, window, cx)
+        });
+        window.input("X", cx);
+    })
+    .expect("move and type");
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(editor.read(cx).snapshot().text().to_string(), "X中"));
+}
+
+#[gpui_kit::test]
 // Spec: docs/modules/selection.md#逻辑选择
 fn vertical_navigation_waits_for_committed_geometry(cx: &mut TestAppContext) {
     let (handle, editor) = open(cx, "a\nb");

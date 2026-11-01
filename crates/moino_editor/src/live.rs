@@ -47,6 +47,7 @@ enum Operation {
     Intent(Intent),
     Source { text: String, selection: Selection },
     Select(Selection, moino_document::Revision),
+    SelectAfterComposition(Selection),
     Navigate { forward: bool, extend: bool },
     Vertical { forward: bool, extend: bool },
     LineEdge { end: bool, extend: bool },
@@ -259,7 +260,8 @@ impl LiveEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.select(selection, window, cx);
+        self.finish_composition(window, cx);
+        self.enqueue(self.selection_operation(selection), window, cx);
     }
     /// Restores a unit from the shared document history.
     pub fn undo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -395,6 +397,12 @@ impl LiveEditor {
                         self.refresh(window, cx);
                     }
                 }
+                Operation::SelectAfterComposition(selection) => {
+                    if let Err(error) = self.document.set_selection(selection) {
+                        self.error = Some(error.code().into());
+                    }
+                    self.refresh(window, cx);
+                }
                 Operation::Select(selection, revision) => {
                     if revision != self.document.snapshot().revision() {
                         self.error = Some("document.stale".into());
@@ -522,8 +530,17 @@ impl LiveEditor {
     }
 
     fn select(&mut self, value: Selection, window: &mut Window, cx: &mut Context<Self>) {
+        let composing = self.composition.is_some();
         self.finish_composition(window, cx);
-        self.enqueue(self.selection_operation(value), window, cx);
+        self.enqueue(
+            if composing {
+                Operation::SelectAfterComposition(value)
+            } else {
+                self.selection_operation(value)
+            },
+            window,
+            cx,
+        );
     }
 
     fn hit(&self, point: Point<Pixels>) -> Option<ScalarOffset> {
