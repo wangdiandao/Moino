@@ -139,13 +139,16 @@ impl PrototypeWorkspace {
         window.focus(&self.menu_focus, cx);
         let focus = self.menu_focus.clone();
         let owner = cx.entity().downgrade();
-        window.on_next_frame(move |window, cx| {
-            if let Some(view) = owner.upgrade()
-                && view.read(cx).menu_visible
-            {
-                window.focus(&focus, cx);
-                window.focus_next(cx);
-            }
+        // Frame callbacks run before drawing the newly mounted overlay.
+        window.on_next_frame(move |window, _| {
+            window.on_next_frame(move |window, cx| {
+                if let Some(view) = owner.upgrade()
+                    && view.read(cx).menu_visible
+                {
+                    window.focus(&focus, cx);
+                    window.focus_next(cx);
+                }
+            });
         });
         cx.notify();
     }
@@ -258,6 +261,36 @@ mod tests {
     use gpui_kit::{AppContext, Modifiers, TestAppContext};
     #[gpui_kit::test]
     // Spec: docs/acceptance/m0.md#真实系统检查
+    fn prototype_menu_waits_for_mount_before_moving_focus(cx: &mut TestAppContext) {
+        if !moino_platform::has_window_menu() {
+            return;
+        }
+        cx.update(init);
+        let (handle, workspace) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| PrototypeWorkspace::new(window, cx))
+            })
+            .expect("prototype")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let focus = workspace.read(cx).editor.read(cx).focus_handle();
+            let text = workspace.read(cx).editor.read(cx).text().to_owned();
+            workspace.update(cx, |workspace, cx| workspace.show_menu(window, cx));
+            window.simulate_next_frame(cx);
+            assert!(!focus.is_focused(window));
+            window.render_frame(cx);
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+            assert!(workspace.read(cx).menu_focus.contains_focused(window, cx));
+            assert!(!workspace.read(cx).menu_focus.is_focused(window));
+            window.press("enter", cx);
+            assert_eq!(workspace.read(cx).editor.read(cx).text(), text);
+        })
+        .expect("prototype menu frame ordering");
+    }
+    #[gpui_kit::test]
+    // Spec: docs/acceptance/m0.md#真实系统检查
     fn alt_chords_preserve_prototype_focus_and_only_bare_alt_release_opens_the_menu(
         cx: &mut TestAppContext,
     ) {
@@ -351,6 +384,8 @@ mod tests {
             window.render_frame(cx);
             assert_eq!(window.find("live-editor").bounds(), before);
             if moino_platform::has_window_menu() {
+                window.simulate_next_frame(cx);
+                window.render_frame(cx);
                 assert_eq!(window.find("menu").focused(), Some(true));
                 window.press("enter", cx);
                 assert!(window.try_find("popup-menu").is_some());

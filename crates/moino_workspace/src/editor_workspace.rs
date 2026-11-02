@@ -183,13 +183,17 @@ impl EditorWorkspace {
         window.focus(&self.menu_focus, cx);
         let focus = self.menu_focus.clone();
         let owner = cx.entity().downgrade();
-        window.on_next_frame(move |window, cx| {
-            if let Some(workspace) = owner.upgrade()
-                && workspace.read(cx).menu_visible
-            {
-                window.focus(&focus, cx);
-                window.focus_next(cx);
-            }
+        // Native frame callbacks precede drawing. Keep the parking focus until
+        // the overlay has entered the rendered tab tree, then enter its menu.
+        window.on_next_frame(move |window, _| {
+            window.on_next_frame(move |window, cx| {
+                if let Some(workspace) = owner.upgrade()
+                    && workspace.read(cx).menu_visible
+                {
+                    window.focus(&focus, cx);
+                    window.focus_next(cx);
+                }
+            });
         });
         cx.notify();
     }
@@ -312,6 +316,68 @@ mod tests {
     use super::{EditorWorkspace, init};
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{AppContext, TestAppContext};
+
+    #[gpui_kit::test]
+    // Spec: docs/modules/menus-dialogs.md
+    fn menu_focus_waits_for_the_overlay_frame_before_traversal(cx: &mut TestAppContext) {
+        if !moino_platform::has_window_menu() {
+            return;
+        }
+        cx.update(init);
+        let (handle, workspace) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| EditorWorkspace::new(window, cx))
+            })
+            .expect("workspace")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let editor_focus = workspace.read(cx).editor.read(cx).focus_handle();
+            workspace.update(cx, |workspace, cx| {
+                workspace.toggle_menu(&super::ToggleMenu, window, cx);
+            });
+            assert!(!editor_focus.is_focused(window));
+            // Native next-frame callbacks run before drawing the new overlay.
+            window.simulate_next_frame(cx);
+            assert!(!editor_focus.is_focused(window));
+            window.render_frame(cx);
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+            assert!(workspace.read(cx).menu_focus.contains_focused(window, cx));
+            assert!(!workspace.read(cx).menu_focus.is_focused(window));
+            window.press("enter", cx);
+            window.render_frame(cx);
+            assert!(
+                workspace
+                    .read(cx)
+                    .editor
+                    .read(cx)
+                    .snapshot()
+                    .text()
+                    .is_empty()
+            );
+        })
+        .expect("native menu frame ordering");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.press("escape", cx);
+        })
+        .expect("dismiss popup");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.press("escape", cx);
+            assert!(!workspace.read(cx).menu_visible);
+            assert!(
+                workspace
+                    .read(cx)
+                    .editor
+                    .read(cx)
+                    .focus_handle()
+                    .is_focused(window)
+            );
+        })
+        .expect("restore document focus");
+    }
 
     #[gpui_kit::test]
     // Spec: docs/modules/menus-dialogs.md
