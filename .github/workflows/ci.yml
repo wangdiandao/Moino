@@ -73,8 +73,8 @@ jobs:
       - name: PDF and raster probes
         shell: bash
         run: |
-          cargo run -p moino_export --example m0 --locked
-          cargo run -p moino_preview --example m0 --locked
+          cargo run -p moino_export --example m0-pdf --locked
+          cargo run -p moino_preview --example m0-raster --locked
       - name: Evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
