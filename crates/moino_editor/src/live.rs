@@ -147,6 +147,7 @@ impl LiveEditor {
                 cx.notify();
             }); // A closed editor has no user scroll target.
         });
+        let source_text = document.snapshot().text().to_string().into();
         Self {
             document,
             options,
@@ -163,7 +164,7 @@ impl LiveEditor {
             reveal_caret: true,
             preferred_x: None,
             started: cx.background_executor().now(),
-            source_text: source.into(),
+            source_text,
             projection_theme,
             projection_rem: px(0.),
             scroll_anchor: None,

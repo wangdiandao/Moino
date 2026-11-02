@@ -207,5 +207,5 @@ fn formal_preview_vectors_use_the_production_surface_and_native_keys(cx: &mut Te
         .expect("preview and geometry");
         count += 1;
     }
-    assert_eq!(count, 6);
+    assert_eq!(count, 8);
 }

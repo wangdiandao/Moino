@@ -65,11 +65,16 @@ pub(super) fn init(cx: &mut App) {
         .expect("static source shortcut");
     cx.bind_keys([
         source,
-        KeyBinding::new("f10", ToggleMenu, None),
         KeyBinding::new("escape", DismissMenu, Some("MoinoWindow")),
         KeyBinding::new("escape", DismissMenu, Some("AppMenuBar")),
         KeyBinding::new(moino_platform::quit_shortcut(), Quit, None),
     ]);
+    if moino_platform::has_window_menu() {
+        cx.bind_keys([
+            KeyBinding::new("alt", ToggleMenu, Some("MoinoWindow")),
+            KeyBinding::new("f10", ToggleMenu, Some("MoinoWindow")),
+        ]);
+    }
     let menus = || {
         vec![
             Menu::new(text("menu.file")).items([MenuItem::action(text("menu.quit"), Quit)]),
@@ -98,8 +103,6 @@ pub struct EditorWorkspace {
     menu_visible: bool,
     menu_focus: FocusHandle,
     previous_focus: Option<FocusHandle>,
-    alt_active: bool,
-    alt_pending: bool,
     requested_mode: Option<bool>,
     _subscriptions: Vec<Subscription>,
 }
@@ -131,8 +134,6 @@ impl EditorWorkspace {
             menu_visible: false,
             menu_focus: cx.focus_handle(),
             previous_focus: None,
-            alt_active: false,
-            alt_pending: false,
             requested_mode: None,
             _subscriptions: subscriptions,
         }
@@ -181,9 +182,14 @@ impl EditorWorkspace {
         self.menu_visible = true;
         window.focus(&self.menu_focus, cx);
         let focus = self.menu_focus.clone();
+        let owner = cx.entity().downgrade();
         window.on_next_frame(move |window, cx| {
-            window.focus(&focus, cx);
-            window.focus_next(cx);
+            if let Some(workspace) = owner.upgrade()
+                && workspace.read(cx).menu_visible
+            {
+                window.focus(&focus, cx);
+                window.focus_next(cx);
+            }
         });
         cx.notify();
     }
@@ -220,31 +226,6 @@ impl Render for EditorWorkspace {
                 }
                 this.editor.update(cx, |editor, cx| editor.redo(window, cx))
             }))
-            .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, _| {
-                if event.keystroke.modifiers.alt {
-                    this.alt_pending = false;
-                }
-            }))
-            .on_modifiers_changed(
-                cx.listener(|this, event: &ModifiersChangedEvent, window, cx| {
-                    if event.modifiers.alt && !this.alt_active {
-                        this.alt_pending = true;
-                    }
-                    if event.modifiers.shift || event.modifiers.control || event.modifiers.platform
-                    {
-                        this.alt_pending = false;
-                    }
-                    if !event.modifiers.alt
-                        && this.alt_active
-                        && this.alt_pending
-                        && !this.menu_visible
-                        && moino_platform::has_window_menu()
-                    {
-                        this.toggle_menu(&ToggleMenu, window, cx);
-                    }
-                    this.alt_active = event.modifiers.alt;
-                }),
-            )
             .child(
                 div()
                     .id("content-viewport")
@@ -331,6 +312,111 @@ mod tests {
     use super::{EditorWorkspace, init};
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{AppContext, TestAppContext};
+
+    #[gpui_kit::test]
+    // Spec: docs/modules/menus-dialogs.md
+    fn consumed_alt_actions_do_not_leave_a_pending_menu_activation(cx: &mut TestAppContext) {
+        use gpui_kit::test::TestEventExt;
+        cx.update(|cx| {
+            init(cx);
+            cx.bind_keys([gpui_kit::KeyBinding::new(
+                "alt-x",
+                moino_editor::Undo,
+                Some("MoinoEditor"),
+            )]);
+        });
+        let (handle, workspace) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| EditorWorkspace::new(window, cx))
+            })
+            .expect("workspace")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let focus = workspace.read(cx).editor.read(cx).focus_handle();
+            window.change_modifiers(gpui_kit::Modifiers::alt(), cx);
+            window.key_down("x", false, cx);
+            window.key_up("x", cx);
+            window.change_modifiers(gpui_kit::Modifiers::default(), cx);
+            assert!(!workspace.read(cx).menu_visible);
+            assert!(focus.is_focused(window));
+            window.press("f10", cx);
+            window.press("escape", cx);
+            window.simulate_next_frame(cx);
+            assert!(!workspace.read(cx).menu_visible);
+            assert!(focus.is_focused(window));
+        })
+        .expect("consumed Alt action");
+    }
+
+    #[gpui_kit::test]
+    // Spec: docs/modules/selection.md#标记展开与折叠
+    fn source_roundtrip_reenters_heading_with_the_same_expanded_geometry(cx: &mut TestAppContext) {
+        cx.update(init);
+        let (handle, workspace) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| EditorWorkspace::new(window, cx))
+            })
+            .expect("workspace")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.input("# Title", cx);
+        })
+        .expect("type heading");
+        cx.run_until_parked();
+        let expanded = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let document = workspace.read(cx).editor.read(cx).snapshot();
+                let height = window
+                    .find(("leaf", document.cst().nodes()[0].id().value()))
+                    .bounds()
+                    .size
+                    .height;
+                window.press("enter", cx);
+                window.input("body", cx);
+                height
+            })
+            .expect("measure expanded heading");
+        cx.run_until_parked();
+        let revision = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let document = workspace.read(cx).editor.read(cx).snapshot();
+                let folded = window
+                    .find(("leaf", document.cst().nodes()[0].id().value()))
+                    .bounds()
+                    .size
+                    .height;
+                assert!(folded > expanded);
+                window.click("toggle-source", cx);
+                window.press("secondary-home", cx);
+                document.revision()
+            })
+            .expect("fold and enter source");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.click("toggle-source", cx);
+        })
+        .expect("return to live heading");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let editor = workspace.read(cx).editor.read(cx);
+            let document = editor.snapshot();
+            let restored = window
+                .find(("leaf", document.cst().nodes()[0].id().value()))
+                .bounds()
+                .size
+                .height;
+            assert!((restored - expanded).abs() <= gpui_kit::px(1.));
+            assert_eq!(document.text().to_string(), "# Title\n\nbody");
+            assert_eq!(document.revision(), revision);
+            assert_eq!(editor.selection().head().offset.value(), 0);
+        })
+        .expect("same heading expansion after source roundtrip");
+    }
 
     #[gpui_kit::test]
     // Spec: docs/modules/view-modes.md#源码模式

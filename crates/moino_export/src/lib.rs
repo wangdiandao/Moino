@@ -69,7 +69,7 @@ mod tests {
     use super::*;
     #[test]
     // Spec: docs/acceptance/m0.md#技术原型
-    fn compiles_searchable_multipage_pdf_and_rejects_external_files() {
+    fn compiles_multipage_pdf_and_rejects_external_files() {
         let result =
             compile_prototype("= Moino\nHello\n#pagebreak()\nSecond page").expect("valid markup");
         assert!(result.bytes().starts_with(b"%PDF-"));

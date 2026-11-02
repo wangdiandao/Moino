@@ -341,6 +341,21 @@ impl Cst {
                 }
                 Event::End(_) => {
                     if let Some(mut node) = stack.pop() {
+                        // The parser nests a task marker before a loose paragraph's
+                        // source start. Keep that prefix in its owning list item,
+                        // as for tight items, rather than outside its CST parent.
+                        if matches!(node.syntax, Syntax::Paragraph | Syntax::Heading(_))
+                            && stack
+                                .last()
+                                .is_some_and(|parent| parent.syntax == Syntax::Item)
+                            && node.children.first().is_some_and(|child| {
+                                matches!(child.syntax, Syntax::Task(_))
+                                    && child.raw.start < node.raw.start
+                            })
+                        {
+                            let task = node.children.remove(0);
+                            append(task, &mut stack, &mut roots);
+                        }
                         finish(&mut node, text);
                         append(node, &mut stack, &mut roots);
                     }

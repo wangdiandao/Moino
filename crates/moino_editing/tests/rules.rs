@@ -24,6 +24,147 @@ fn run(source: &str, start: usize, end: usize, intent: Intent, pair: bool) -> (S
     }
     (doc.snapshot().text().to_string(), caret)
 }
+fn assert_single_undo(
+    source: &str,
+    caret: usize,
+    intent: Intent,
+    pair: bool,
+    expected: &str,
+    next: usize,
+) {
+    let mut document = Document::new(DocumentId::new(1), Epoch::new(0), source);
+    let selected = Selection::cursor(ScalarOffset::new(caret));
+    document.set_selection(selected).expect("cursor");
+    let outcome = resolve(
+        &document.snapshot(),
+        selected,
+        intent,
+        &Options::new("    ", pair).expect("options"),
+    )
+    .expect("resolve");
+    assert_eq!(outcome.selection().head().offset.value(), next);
+    document
+        .commit(outcome.into_transaction().expect("edit"), Duration::ZERO)
+        .expect("commit");
+    assert_eq!(document.snapshot().text().to_string(), expected);
+    assert!(document.snapshot().cst().is_valid());
+    assert!(document.undo().expect("single undo"));
+    assert_eq!(document.snapshot().text().to_string(), source);
+    assert_eq!(document.selection(), selected);
+    assert!(!document.has_undo());
+    document.redo().expect("redo");
+    assert_eq!(document.snapshot().text().to_string(), expected);
+    assert_eq!(document.selection().head().offset.value(), next);
+}
+#[test]
+// Spec: docs/modules/editing.md#enter
+fn heading_enter_uses_cst_markers_and_keeps_outer_containers() {
+    for (source, caret, expected, next) in [
+        ("#", 1, "#\n\n", 3),
+        ("# ", 2, "# \n\n", 4),
+        ("#\ttitle", 2, "\n\n#\ttitle", 4),
+        ("#\ttitle", 4, "#\tti\n\ntle", 6),
+        ("Title\n===\n", 0, "\n\nTitle\n===\n", 2),
+        ("Title\n===\n", 2, "Ti\n===\n\ntle\n", 8),
+        ("Title\n===\n", 5, "Title\n===\n\n\n", 11),
+        ("> # title", 6, "> # ti\n> tle", 9),
+        ("- # title", 6, "- # ti\n  tle", 9),
+        ("10. # title", 8, "10. # ti\n    tle", 13),
+        ("-\t# title", 6, "-\t# ti\n \ttle", 9),
+        ("1.\t# title", 7, "1.\t# ti\n  \ttle", 11),
+        ("> - # title", 8, "> - # ti\n>   tle", 13),
+        ("- > # title", 8, "- > # ti\n  > tle", 13),
+        ("- [x] Title\n  ===", 8, "- [x] Ti\n  ===\n  tle", 17),
+        ("- [x]\tTitle\n  ===", 8, "- [x]\tTi\n  ===\n  tle", 17),
+    ] {
+        assert_single_undo(source, caret, Intent::Enter, false, expected, next);
+    }
+    for (source, anchor, head, expected, next) in [
+        ("# title", 5, 3, "# t\n\nle", 5),
+        ("Title\n===", 4, 1, "T\n===\n\ne", 7),
+        ("- # title", 7, 5, "- # t\n  le", 8),
+        ("> Title\n> ===", 6, 3, "> T\n> ===\n> e", 12),
+    ] {
+        let mut document = Document::new(DocumentId::new(1), Epoch::new(0), source);
+        let selected = Selection::new(
+            Endpoint {
+                offset: ScalarOffset::new(anchor),
+                affinity: Affinity::After,
+            },
+            Endpoint {
+                offset: ScalarOffset::new(head),
+                affinity: Affinity::After,
+            },
+        );
+        document
+            .set_selection(selected)
+            .expect("backward title selection");
+        let outcome = resolve(
+            &document.snapshot(),
+            selected,
+            Intent::Enter,
+            &Options::new("    ", false).expect("options"),
+        )
+        .expect("split selected title");
+        document
+            .commit(
+                outcome.into_transaction().expect("split transaction"),
+                Duration::ZERO,
+            )
+            .expect("commit");
+        assert_eq!(document.snapshot().text().to_string(), expected);
+        assert_eq!(document.selection().head().offset.value(), next);
+        document.undo().expect("undo selected split");
+        assert_eq!(document.snapshot().text().to_string(), source);
+        assert_eq!(document.selection(), selected);
+    }
+}
+#[test]
+// Spec: docs/modules/editing.md#backspace-与-delete
+fn heading_backspace_keeps_body_and_container_for_atx_tabs_and_setext() {
+    for (source, caret, expected, next) in [
+        ("#\ttitle", 2, "title", 0),
+        ("> #\ttitle", 4, "> title", 2),
+        ("- #\ttitle", 4, "- title", 2),
+        ("Title\n===\n", 0, "Title\n", 0),
+        ("> Title\n> ===\n", 2, "> Title\n", 2),
+        ("- Title\n  ===\n", 2, "- Title\n", 2),
+        ("- [x] Title\n  ===\n", 6, "- [x] Title\n", 6),
+    ] {
+        assert_single_undo(source, caret, Intent::Backspace, false, expected, next);
+    }
+}
+#[test]
+// Spec: docs/modules/editing.md#交互语法转换
+fn keyboard_fence_conversion_is_independent_of_automatic_pairing() {
+    assert_single_undo(
+        "``",
+        2,
+        Intent::Insert("`".to_owned()),
+        false,
+        "```\n\n```",
+        4,
+    );
+    for intent in [
+        Intent::Paste("`".to_owned()),
+        Intent::Composition("`".to_owned()),
+    ] {
+        assert_single_undo("``", 2, intent, false, "```", 3);
+    }
+}
+#[test]
+// Spec: docs/modules/editing.md#自动配对与智能标点
+fn backspace_removes_an_empty_body_pair_as_one_history_unit() {
+    for source in ["()", "[]", "{}", "\"\"", "''", "**", "__", "~~", "$$", "``"] {
+        assert_single_undo(source, 1, Intent::Backspace, true, "", 0);
+    }
+    assert_single_undo("()", 1, Intent::Backspace, false, ")", 0);
+    assert_single_undo("`()`", 2, Intent::Backspace, true, "`)`", 1);
+    assert_single_undo("```\n()\n```", 5, Intent::Backspace, true, "```\n)\n```", 4);
+    assert_single_undo("**word**", 1, Intent::Backspace, true, "word", 0);
+    assert_single_undo("**word**", 7, Intent::Backspace, true, "**word*", 6);
+    assert_single_undo("**()**", 3, Intent::Backspace, true, "****", 2);
+}
 #[test]
 // Spec: docs/modules/editing.md#enter
 fn enter_continues_containers_and_preserves_literal_newlines() {
@@ -202,6 +343,58 @@ fn inline_formats_toggle_and_pairing_is_disabled_for_composition() {
             &Options::new("  ", false).expect("options")
         )
         .is_err()
+    );
+}
+#[test]
+// Spec: docs/modules/editing.md#自动配对与智能标点
+fn apostrophes_after_unicode_words_do_not_create_an_extra_quote() {
+    for (source, caret, expected) in [
+        ("don", 3, "don'"),
+        ("dont", 3, "don't"),
+        ("日本語", 3, "日本語'"),
+        ("cafe\u{301}", 5, "cafe\u{301}'"),
+        ("123", 3, "123'"),
+    ] {
+        assert_eq!(
+            run(source, caret, caret, Intent::Insert("'".to_owned()), true),
+            (expected.to_owned(), caret + 1),
+        );
+    }
+    assert_eq!(
+        run("", 0, 0, Intent::Insert("'".to_owned()), true),
+        ("''".to_owned(), 1),
+    );
+    assert_eq!(
+        run("word", 0, 4, Intent::Insert("'".to_owned()), true),
+        ("'word'".to_owned(), 5),
+    );
+}
+#[test]
+// Spec: docs/modules/editing.md#自动配对与智能标点
+fn a_backtick_skips_only_an_existing_inline_code_closing_marker() {
+    for (source, caret, next) in [("`code`", 5, 6), ("``co`de``", 7, 8), ("``co`de``", 8, 9)] {
+        let document = Document::new(DocumentId::new(1), Epoch::new(0), source);
+        let outcome = resolve(
+            &document.snapshot(),
+            Selection::cursor(ScalarOffset::new(caret)),
+            Intent::Insert("`".to_owned()),
+            &Options::new("    ", true).expect("options"),
+        )
+        .expect("skip closer");
+        assert_eq!(outcome.selection().head().offset.value(), next);
+        assert!(outcome.into_transaction().is_none());
+    }
+    assert_eq!(
+        run("``co`de``", 4, 4, Intent::Insert("`".to_owned()), true),
+        ("``co``de``".to_owned(), 5),
+    );
+    assert_eq!(
+        run("```\ncode\n```", 9, 9, Intent::Insert("`".to_owned()), true),
+        ("```\ncode\n````".to_owned(), 10),
+    );
+    assert_eq!(
+        run("`code`", 5, 5, Intent::Insert("`".to_owned()), false),
+        ("`code``".to_owned(), 6),
     );
 }
 #[test]

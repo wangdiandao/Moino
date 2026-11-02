@@ -310,7 +310,9 @@ pub(super) fn project(
                     {
                         *wrapper = Wrapper::Indent;
                     }
-                    let mut has_row = inline > 0
+                    let mut has_row = children[..inline]
+                        .iter()
+                        .any(|child| !matches!(child.syntax(), Syntax::Task(_)))
                         || children.is_empty()
                         || children
                             .first()
@@ -350,8 +352,21 @@ pub(super) fn project(
             mark_background: theme.mark_background(),
             scripts: Vec::new(),
         };
+        let heading_ready = if matches!(node.syntax(), Syntax::Heading(_)) {
+            let line = &source[raw.start.value()..raw.end.value()];
+            let mut prefix = line.iter().skip_while(|ch| matches!(ch, ' ' | '\t'));
+            if prefix.clone().next() == Some(&'#') {
+                prefix.find(|ch| **ch != '#').is_some()
+            } else {
+                true
+            }
+        } else {
+            false
+        };
         let heading = match node.syntax() {
-            Syntax::Heading(level) if !builder.expanded(raw.clone()) => Some(*level),
+            Syntax::Heading(level) if heading_ready && !builder.expanded(raw.clone()) => {
+                Some(*level)
+            }
             _ => None,
         };
         let range = if matches!(node.syntax(), Syntax::Item) {
@@ -365,7 +380,9 @@ pub(super) fn project(
         };
         // Only ordinary leaves are interpreted here; rich blocks remain editable source until M4.
         let rule = matches!(node.syntax(), Syntax::Rule) && !builder.expanded(raw.clone());
-        if rule {
+        if matches!(node.syntax(), Syntax::Heading(_)) && !heading_ready {
+            builder.append(raw.clone());
+        } else if rule {
             builder.boundaries.push((0, raw.start));
         } else if matches!(
             node.syntax(),
@@ -381,7 +398,7 @@ pub(super) fn project(
         } else {
             builder.append(range);
         }
-        if matches!(node.syntax(), Syntax::Heading(_)) && heading.is_none() {
+        if heading_ready && heading.is_none() {
             builder.marker(node.opening_marker());
             builder.marker(node.closing_marker());
         }
@@ -490,7 +507,7 @@ pub(super) fn project(
             text: builder.text,
             raw,
             heading_badge: match node.syntax() {
-                Syntax::Heading(level) if heading.is_none() => Some(*level),
+                Syntax::Heading(level) if heading_ready && heading.is_none() => Some(*level),
                 _ => None,
             },
             boundaries: builder.boundaries,
@@ -724,6 +741,7 @@ mod tests {
     fn nested_and_loose_list_rows_keep_one_marker_per_item() {
         for (source, expected) in [
             ("- a\n  - b\n  - c\n- d", vec!["a", "b", "c", "d"]),
+            ("- [x] 中😀\n\n  tail", vec!["中😀", "tail"]),
             (
                 "- a\n\n  continued\n\n  - child",
                 vec!["a", "continued", "child"],

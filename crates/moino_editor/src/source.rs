@@ -8,7 +8,7 @@ use moino_text::ByteOffset;
 use moino_text::{ScalarOffset, TextBuffer, Utf16Offset};
 use std::{cell::Cell, rc::Rc};
 
-fn normalized_position(source: &str, offset: Utf16Offset) -> Option<ScalarOffset> {
+pub(super) fn normalized_position(source: &str, offset: Utf16Offset) -> Option<ScalarOffset> {
     let mut units = 0;
     for (byte, character) in source.char_indices() {
         if units == offset.value() {

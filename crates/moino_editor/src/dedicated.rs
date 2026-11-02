@@ -120,7 +120,88 @@ impl Render for DedicatedProbe {
 mod tests {
     use super::DedicatedProbe;
     use gpui_kit::test::TestWindowExt;
-    use gpui_kit::{AppContext, TestAppContext, px};
+    use gpui_kit::{
+        AppContext, Context, Entity, IntoElement, Render, ScrollHandle, TestAppContext,
+        TestSupportExt, Window, div, point, prelude::*, px,
+    };
+
+    struct ScrolledProbe {
+        probe: Entity<DedicatedProbe>,
+        scroll: ScrollHandle,
+    }
+
+    impl Render for ScrolledProbe {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("probe-viewport")
+                .test_support()
+                .h(px(180.))
+                .w_full()
+                .overflow_y_scroll()
+                .track_scroll(&self.scroll)
+                .child(div().h(px(200.)))
+                .child(self.probe.clone())
+                .child(div().h(px(200.)))
+        }
+    }
+
+    #[gpui_kit::test]
+    // Spec: docs/acceptance/m0.md#技术原型
+    fn mounting_and_leaving_the_editor_preserve_the_scrolled_text_anchor(cx: &mut TestAppContext) {
+        cx.update(gpui_kit::init);
+        let (handle, fixture) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| ScrolledProbe {
+                    probe: cx.new(|cx| DedicatedProbe::new(window, cx)),
+                    scroll: ScrollHandle::new(),
+                })
+            })
+            .expect("scrolled probe window")
+        });
+        let (offset, slot, origin) = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                fixture.read(cx).scroll.set_offset(point(px(0.), px(-180.)));
+                window.render_frame(cx);
+                let fixture = fixture.read(cx);
+                let offset = fixture.scroll.offset();
+                assert!(offset.y < px(0.), "fixture must actually be scrolled");
+                let origin = fixture.probe.read(cx).geometry.borrow()[&2].position_for_index(0);
+                (offset, window.find("code-slot").bounds(), origin)
+            })
+            .expect("scrolled static geometry");
+        cx.update_window(handle, |_, window, cx| window.click("mount-code", cx))
+            .expect("mount editor");
+        for _ in 0..2 {
+            cx.update_window(handle, |_, window, cx| {
+                window.simulate_next_frame(cx);
+                window.render_frame(cx);
+            })
+            .expect("settle focus and geometry");
+        }
+        cx.update_window(handle, |_, window, cx| {
+            let fixture = fixture.read(cx);
+            assert_eq!(fixture.scroll.offset(), offset);
+            assert_eq!(window.find("code-slot").bounds(), slot);
+            let active = fixture.probe.read(cx).editor.read(cx).input_bounds().origin;
+            assert!((active.x - origin.x).abs() <= px(1.));
+            assert!((active.y - origin.y).abs() <= px(1.));
+            window.click("mount-code", cx);
+            window.render_frame(cx);
+        })
+        .expect("leave editor");
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+            let fixture = fixture.read(cx);
+            assert_eq!(fixture.scroll.offset(), offset);
+            assert_eq!(window.find("code-slot").bounds(), slot);
+            let restored = fixture.probe.read(cx).geometry.borrow()[&2].position_for_index(0);
+            assert!((restored.x - origin.x).abs() <= px(1.));
+            assert!((restored.y - origin.y).abs() <= px(1.));
+        })
+        .expect("restored static scroll anchor");
+    }
 
     #[gpui_kit::test]
     // Spec: docs/acceptance/m0.md#技术原型

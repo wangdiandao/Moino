@@ -1,6 +1,7 @@
 //! L0 view-independent editing intents; depends on text, Markdown and document transactions.
 #![forbid(unsafe_code)]
 
+mod heading;
 mod indentation;
 
 use moino_document::{Edit, Origin, Selection, Snapshot, Transaction};
@@ -218,21 +219,29 @@ pub fn resolve(
         }
         Intent::Insert(value) => {
             let value = normalize_newlines(&value);
+            if options.auto_pair
+                && start == end
+                && value == "`"
+                && is_inline_code_closer(snapshot.cst().nodes(), offset(start))
+            {
+                return Ok(navigation(Selection::cursor(offset(start + 1))));
+            }
+            if start == end
+                && value == "`"
+                && start >= 2
+                && start - 2 == line_start
+                && chars[start - 2..start] == ['`', '`']
+                && !in_literal(snapshot.cst().nodes(), start)
+            {
+                return Ok(replacement(
+                    snapshot,
+                    offset(start - 2)..offset(start),
+                    "```\n\n```",
+                    start + 2,
+                    Origin::Command,
+                ));
+            }
             if options.auto_pair && !in_literal(snapshot.cst().nodes(), start) {
-                if start == end
-                    && value == "`"
-                    && start >= 2
-                    && start - 2 == line_start
-                    && chars[start - 2..start] == ['`', '`']
-                {
-                    return Ok(replacement(
-                        snapshot,
-                        offset(start - 2)..offset(start),
-                        "```\n\n```",
-                        start + 2,
-                        Origin::Command,
-                    ));
-                }
                 if start == end
                     && value == "]"
                     && start > 0
@@ -306,7 +315,16 @@ pub fn resolve(
                 if start == end && chars.get(start) == Some(&ch) && ")]}`\"'*_~$".contains(ch) {
                     return Ok(navigation(Selection::cursor(offset(start + 1))));
                 }
-                if let Some(close) = partner(ch) {
+                let apostrophe = ch == '\''
+                    && start == end
+                    && snapshot
+                        .text()
+                        .words()
+                        .iter()
+                        .any(|word| word.start < offset(start) && offset(start) <= word.end);
+                if let Some(close) = partner(ch)
+                    && !apostrophe
+                {
                     let selected: String = chars[start..end].iter().collect();
                     let wrapped = format!("{ch}{selected}{close}");
                     return Ok(replacement(
@@ -335,6 +353,9 @@ pub fn resolve(
                     start + 1,
                     Origin::Command,
                 ));
+            }
+            if let Some(outcome) = heading::enter(snapshot, selection, &chars) {
+                return Ok(outcome);
             }
             let line_chars: Vec<char> = line.chars().collect();
             let marker: String = line_chars[..prefix].iter().collect();
@@ -407,7 +428,7 @@ pub fn resolve(
             Ok(replacement(snapshot, range, "", start, Origin::Command))
         }
         Intent::Backspace => {
-            if let Some(heading) = heading_start(snapshot.cst().nodes(), start) {
+            if let Some(heading) = heading::at_start(snapshot.cst().nodes(), offset(start)) {
                 let raw = snapshot
                     .text()
                     .slice(heading.raw())
@@ -430,6 +451,19 @@ pub fn resolve(
             }
             if let Some(node) = marker_boundary(snapshot.cst().nodes(), start, false) {
                 return Ok(remove_markers(snapshot, selection, node));
+            }
+            if options.auto_pair
+                && !in_literal(snapshot.cst().nodes(), start)
+                && partner(chars[start - 1]).is_some_and(|close| chars.get(start) == Some(&close))
+                && marker_boundary(snapshot.cst().nodes(), start, true).is_none()
+            {
+                return Ok(replacement(
+                    snapshot,
+                    offset(start - 1)..offset(start + 1),
+                    "",
+                    start - 1,
+                    Origin::Command,
+                ));
             }
             if in_literal(snapshot.cst().nodes(), start) {
                 let previous = snapshot
@@ -728,21 +762,6 @@ fn text_intersects(nodes: &[Node], start: usize, end: usize) -> bool {
             && start < node.raw().end.value()
             && (node.syntax() == &Syntax::Text || text_intersects(node.children(), start, end))
     })
-}
-fn heading_start(nodes: &[Node], position: usize) -> Option<&Node> {
-    for node in nodes {
-        if node.raw().start.value() <= position && position <= node.raw().end.value() {
-            if let Some(heading) = heading_start(node.children(), position) {
-                return Some(heading);
-            }
-            if matches!(node.syntax(), Syntax::Heading(_))
-                && node.content().start.value() == position
-            {
-                return Some(node);
-            }
-        }
-    }
-    None
 }
 fn text_block(nodes: &[Node], position: usize, document_end: usize) -> Option<&Node> {
     for node in nodes {
@@ -1181,5 +1200,17 @@ fn in_literal(nodes: &[Node], position: usize) -> bool {
                     | Syntax::FrontMatter
                     | Syntax::Code
             ) || in_literal(node.children(), position))
+    })
+}
+fn is_inline_code_closer(nodes: &[Node], position: ScalarOffset) -> bool {
+    nodes.iter().any(|node| {
+        let closing = node.closing_marker();
+        let raw = node.raw();
+        raw.start <= position
+            && position < raw.end
+            && ((node.syntax() == &Syntax::Code
+                && closing.start <= position
+                && position < closing.end)
+                || is_inline_code_closer(node.children(), position))
     })
 }

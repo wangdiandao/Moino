@@ -2,6 +2,7 @@ use crate::{PrototypeEditor, byte_from_utf16};
 use gpui_kit::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, px, size,
 };
+use moino_text::{TextBuffer, Utf16Offset};
 use std::ops::Range;
 
 impl EntityInputHandler for PrototypeEditor {
@@ -66,6 +67,24 @@ impl EntityInputHandler for PrototypeEditor {
             }
             self.marked = None;
         } else {
+            let preedit = TextBuffer::new(text);
+            let selection = if let Some(selection) = selection {
+                if selection.start > selection.end {
+                    return;
+                }
+                let position = |offset| {
+                    crate::source::normalized_position(text, Utf16Offset::new(offset))
+                        .and_then(|at| preedit.to_utf16(at).ok())
+                        .map(Utf16Offset::value)
+                };
+                let (Some(start), Some(end)) = (position(selection.start), position(selection.end))
+                else {
+                    return;
+                };
+                Some(start..end)
+            } else {
+                None
+            };
             let original = self.original_composition.is_none().then(|| {
                 (
                     self.text.clone(),
@@ -80,14 +99,8 @@ impl EntityInputHandler for PrototypeEditor {
                 self.original_composition = original;
             }
             let start = inserted.start;
-            let end = inserted.end;
             self.marked = Some(inserted);
-            if let Some(selection) = selection
-                && selection.start <= selection.end
-                && selection.end <= end - start
-                && byte_from_utf16(&self.text, start + selection.start).is_some()
-                && byte_from_utf16(&self.text, start + selection.end).is_some()
-            {
+            if let Some(selection) = selection {
                 self.selection = start + selection.start..start + selection.end;
             }
         }
@@ -180,6 +193,19 @@ mod tests {
             window.render_frame(cx);
             let original = editor.read(cx).text().to_owned();
             let bounds = window.find("live-editor").bounds();
+            for invalid in [4..4, Range { start: 5, end: 3 }, 6..6] {
+                editor.update(cx, |editor, cx| {
+                    editor.replace_and_mark_text_in_range(
+                        Some(0..0),
+                        "中\r\n😀",
+                        Some(invalid),
+                        window,
+                        cx,
+                    );
+                    assert_eq!(editor.text(), original);
+                    assert!(editor.marked.is_none());
+                });
+            }
             let mut input =
                 TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window);
             input.compose_text(Some(9999..9999), "invalid", None, cx);
@@ -190,7 +216,7 @@ mod tests {
             assert_eq!(input.marked_text_range(cx), Some(0..4));
             assert_eq!(
                 input.selected_text_range(cx).expect("selection").range,
-                4..4
+                2..2
             );
             input.compose_text(None, "", None, cx);
             assert_eq!(editor.read(cx).text(), original);
