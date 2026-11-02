@@ -2561,7 +2561,7 @@ dependencies = [
 [[package]]
 name = "gpui-base"
 version = "0.8.1"
-source = "git+https://github.com/wangdiandao/gpui-kit?rev=d6f69648d0d8150a1125fd3e3efd49e1878cc3ee#d6f69648d0d8150a1125fd3e3efd49e1878cc3ee"
+source = "git+https://github.com/wangdiandao/gpui-kit?rev=abe8d3bfbef48eec253cbd99dd0dffdfd4771e76#abe8d3bfbef48eec253cbd99dd0dffdfd4771e76"
 dependencies = [
  "aho-corasick",
  "anyhow",

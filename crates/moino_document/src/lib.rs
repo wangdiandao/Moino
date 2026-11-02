@@ -377,6 +377,22 @@ pub struct PreparedHistory {
     cst: Cst,
     revision: Revision,
 }
+impl PreparedHistory {
+    /// Maps a view selection through the exact replay steps, preserving its direction.
+    /// Callers publish this mapping only after `Document::apply_history` succeeds.
+    pub fn map_selection(&self, mut selection: Selection) -> Selection {
+        if self.request.redo {
+            for edits in &self.request.unit.forward {
+                selection = selection.mapped(edits);
+            }
+        } else {
+            for edits in self.request.unit.inverse.iter().rev() {
+                selection = selection.mapped(edits);
+            }
+        }
+        selection
+    }
+}
 fn candidate_cst(cst: &Cst, text: &TextBuffer, edits: &[Edit]) -> Result<Cst, DocumentError> {
     let changes: Vec<_> = edits
         .iter()

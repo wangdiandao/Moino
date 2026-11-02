@@ -89,6 +89,9 @@ impl EntityInputHandler for LiveEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.options.is_read_only() || self.document.is_protected() {
+            return;
+        }
         if text.is_empty() {
             self.composition = None;
             self.refresh(window, cx);

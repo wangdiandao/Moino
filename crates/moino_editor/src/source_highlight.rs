@@ -1,4 +1,5 @@
 //! Syntax ranges are projected from the authoritative CST, never reparsed by Kit.
+use crate::source_change::SourceChange;
 use gpui_kit::component::input::{
     EditorState, FoldRange, HighlightStyleResolver, InputEdit, InputHighlighter, Rope,
 };
@@ -6,14 +7,16 @@ use gpui_kit::{Context, HighlightStyle, SharedString, Window};
 use moino_document::Snapshot;
 use moino_markdown::{Node, Syntax};
 use std::ops::Range;
+use std::{cell::Cell, rc::Rc};
 
 pub(super) struct SourceHighlighter {
     runs: Vec<(Range<usize>, &'static str)>,
     len: usize,
     valid: bool,
+    changes: Rc<Cell<Option<SourceChange>>>,
 }
 impl SourceHighlighter {
-    pub fn new(snapshot: &Snapshot) -> Self {
+    pub fn new(snapshot: &Snapshot, changes: Rc<Cell<Option<SourceChange>>>) -> Self {
         fn collect(
             nodes: &[Node],
             snapshot: &Snapshot,
@@ -51,6 +54,7 @@ impl SourceHighlighter {
             runs,
             len: snapshot.text().to_string().len(),
             valid: true,
+            changes,
         }
     }
 }
@@ -66,6 +70,13 @@ impl InputHighlighter for SourceHighlighter {
         _: &mut Window,
         _: &mut Context<EditorState>,
     ) {
+        let edit = edit.filter(|edit| {
+            edit.start_byte != edit.old_end_byte || edit.start_byte != edit.new_end_byte
+        });
+        if let Some(edit) = edit {
+            self.changes
+                .set(Some(SourceChange::include(self.changes.get(), edit)));
+        }
         self.valid = edit.is_none() && text.len() == self.len;
     }
     fn styles(

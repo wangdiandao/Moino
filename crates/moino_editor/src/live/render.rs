@@ -1,16 +1,19 @@
 use super::*;
 
 impl Render for LiveEditor {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.projection_rem != window.rem_size() {
+            self.remember_scroll_anchor();
+            self.projection_rem = window.rem_size();
+            self.list.remeasure_items(0..self.leaves.len());
+        }
         let theme = effective_theme(cx);
         if self.projection_theme != theme && self.composition.is_none() {
+            self.remember_scroll_anchor();
             self.projection_theme = theme;
-            self.leaves = projection::project(
-                &self.document.snapshot(),
-                self.document.selection(),
-                theme.marker(),
-            );
-            self.list.remeasure();
+            self.leaves =
+                projection::project(&self.document.snapshot(), self.document.selection(), theme);
+            self.list.remeasure_items(0..self.leaves.len());
         }
         let owner = cx.entity();
         let rows = list(self.list.clone(), move |ix, window, cx| {
@@ -27,6 +30,50 @@ impl Render for LiveEditor {
             .aria_value(source)
             .track_focus(&self.focus)
             .key_context("MoinoEditor")
+            .on_action(cx.listener(|this, _: &MoveToStart, window, cx| {
+                this.finish_composition(window, cx);
+                this.enqueue(
+                    Operation::DocumentEdge {
+                        end: false,
+                        extend: false,
+                    },
+                    window,
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|this, _: &MoveToEnd, window, cx| {
+                this.finish_composition(window, cx);
+                this.enqueue(
+                    Operation::DocumentEdge {
+                        end: true,
+                        extend: false,
+                    },
+                    window,
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|this, _: &SelectToStart, window, cx| {
+                this.finish_composition(window, cx);
+                this.enqueue(
+                    Operation::DocumentEdge {
+                        end: false,
+                        extend: true,
+                    },
+                    window,
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|this, _: &SelectToEnd, window, cx| {
+                this.finish_composition(window, cx);
+                this.enqueue(
+                    Operation::DocumentEdge {
+                        end: true,
+                        extend: true,
+                    },
+                    window,
+                    cx,
+                );
+            }))
             .on_action(cx.listener(|this, _: &commands::Bold, window, cx| {
                 this.dispatch(Intent::Inline(InlineFormat::Bold), window, cx)
             }))
@@ -110,32 +157,16 @@ impl Render for LiveEditor {
                 this.enqueue(Operation::Redo, window, cx);
             }))
             .on_action(cx.listener(|this, _: &SelectAll, window, cx| {
-                this.select(
-                    selection(ScalarOffset::new(0), this.document.snapshot().text().len()),
-                    window,
-                    cx,
-                );
+                this.finish_composition(window, cx);
+                this.enqueue(Operation::SelectAll, window, cx);
             }))
-            .on_action(cx.listener(|this, _: &Copy, _, cx| {
-                if let Ok(text) = this
-                    .document
-                    .snapshot()
-                    .text()
-                    .slice(this.document.selection().range())
-                {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                }
+            .on_action(cx.listener(|this, _: &Copy, window, cx| {
+                this.finish_composition(window, cx);
+                this.enqueue(Operation::Copy { cut: false }, window, cx);
             }))
             .on_action(cx.listener(|this, _: &Cut, window, cx| {
-                if let Ok(text) = this
-                    .document
-                    .snapshot()
-                    .text()
-                    .slice(this.document.selection().range())
-                {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    this.dispatch(Intent::Paste(String::new()), window, cx);
-                }
+                this.finish_composition(window, cx);
+                this.enqueue(Operation::Copy { cut: true }, window, cx);
             }))
             .on_action(cx.listener(|this, _: &Paste, window, cx| {
                 if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
@@ -161,14 +192,17 @@ impl Render for LiveEditor {
                             cx,
                         );
                     }
-                    "home" | "end" => this.enqueue(
-                        Operation::LineEdge {
-                            end: event.keystroke.key == "end",
-                            extend: event.keystroke.modifiers.shift,
-                        },
-                        window,
-                        cx,
-                    ),
+                    "home" | "end" => {
+                        this.finish_composition(window, cx);
+                        this.enqueue(
+                            Operation::LineEdge {
+                                end: event.keystroke.key == "end",
+                                extend: event.keystroke.modifiers.shift,
+                            },
+                            window,
+                            cx,
+                        );
+                    }
                     _ => {}
                 }
             }))
@@ -227,17 +261,29 @@ impl Render for LiveEditor {
                 cx.listener(|this, _, _, _| this.dragging = false),
             )
             .size_full()
+            .relative()
             .text_size(moino_theme::body_size())
             .line_height(relative(1.6))
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .child(rows)
-            .when_some(self.error.clone(), |this, _| {
+            .when_some(self.error.clone(), |this, code| {
+                let message = moino_ui::editing_error(&code);
                 this.child(
                     div()
                         .id("editor-error")
+                        .test_support()
                         .role(Role::Alert)
-                        .child(moino_ui::text("editor.failed")),
+                        .aria_label(message.clone())
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .bg(cx.theme().popover)
+                        .text_color(cx.theme().danger)
+                        .px_3()
+                        .py_2()
+                        .child(message),
                 )
             })
             .into_any_element();
