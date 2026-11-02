@@ -219,7 +219,17 @@ fn emitted_pdf_preserves_cjk_search_text_embedded_fonts_bookmarks_and_repeated_t
         source.push_str(&format!("[Row {row}], [Validation],\n"));
     }
     source.push_str(")\n");
-    let compiled = moino_export::compile_prototype(&source).expect("pagination fixture");
+    let compiled = moino_export::compile_prototype(&source).unwrap_or_else(|error| {
+        let probes = "中文测试。日本語の検証。한국어 검증."
+            .chars()
+            .filter(|character| !character.is_whitespace())
+            .map(|character| {
+                let result = moino_export::compile_prototype(&character.to_string());
+                (character, result.err().map(|error| error.to_string()))
+            })
+            .collect::<Vec<_>>();
+        panic!("pagination fixture: {error}; individual character diagnostics: {probes:?}");
+    });
     assert!(compiled.warnings().is_empty(), "{:?}", compiled.warnings());
     let pdf = Pdf::new(compiled.bytes().to_vec()).expect("parsed emitted PDF");
     assert!(pdf.pages().len() >= 3);
