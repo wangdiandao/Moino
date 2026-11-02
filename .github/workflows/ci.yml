@@ -41,12 +41,13 @@ jobs:
             throw 'CJK font fixture digest mismatch'
           }
           $fixtureDirectory = if ($env:RUNNER_OS -eq 'Windows') {
-            Join-Path $env:LOCALAPPDATA 'Microsoft/Windows/Fonts'
+            Join-Path $env:USERPROFILE 'AppData/Local/Microsoft/Windows/Fonts'
           } else {
             Join-Path $env:HOME 'Library/Fonts'
           }
           New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
           Copy-Item -LiteralPath $fixturePath -Destination $fixtureDirectory
+          Get-Item -LiteralPath (Join-Path $fixtureDirectory 'NotoSansCJKsc-Regular.otf') | Select-Object FullName, Length
       - name: Toolchain
         shell: bash
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy

@@ -52,14 +52,14 @@ fn compile_world(world: world::PrototypeWorld) -> Result<CompiledPdf, ExportErro
                 .join("; "),
         )
     })?;
-    if document
+    if let Some(family) = document
         .pages()
         .iter()
-        .any(|page| has_unavailable_font(&page.frame))
+        .find_map(|page| unavailable_font(&page.frame))
     {
-        return Err(ExportError(
-            "font unavailable: missing visible glyph or placeholder font".into(),
-        ));
+        return Err(ExportError(format!(
+            "font unavailable: missing visible glyph or placeholder font in {family}"
+        )));
     }
     let bytes = typst_pdf::pdf(
         &document,
@@ -76,20 +76,19 @@ fn compile_world(world: world::PrototypeWorld) -> Result<CompiledPdf, ExportErro
     })
 }
 
-fn has_unavailable_font(frame: &typst::layout::Frame) -> bool {
+fn unavailable_font(frame: &typst::layout::Frame) -> Option<&str> {
     use typst::{layout::FrameItem, text::is_default_ignorable};
-    frame.items().any(|(_, item)| match item {
-        FrameItem::Group(group) => has_unavailable_font(&group.frame),
-        FrameItem::Text(text) => {
-            text.font.info().is_last_resort()
-                || text.glyphs.iter().any(|glyph| {
-                    glyph.id == 0
-                        && text.text[glyph.range()].chars().any(|character| {
-                            !character.is_whitespace() && !is_default_ignorable(character)
-                        })
-                })
-        }
-        _ => false,
+    frame.items().find_map(|(_, item)| match item {
+        FrameItem::Group(group) => unavailable_font(&group.frame),
+        FrameItem::Text(text) => (text.font.info().is_last_resort()
+            || text.glyphs.iter().any(|glyph| {
+                glyph.id == 0
+                    && text.text[glyph.range()].chars().any(|character| {
+                        !character.is_whitespace() && !is_default_ignorable(character)
+                    })
+            }))
+        .then_some(text.font.info().family.as_str()),
+        _ => None,
     })
 }
 
