@@ -136,7 +136,7 @@ fn formal_editing_vectors_use_native_events_and_shared_actions(cx: &mut TestAppC
         });
         count += 1;
     }
-    assert_eq!(count, 26);
+    assert_eq!(count, 27);
 }
 
 #[gpui_kit::test]

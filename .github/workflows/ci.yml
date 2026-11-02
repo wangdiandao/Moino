@@ -31,6 +31,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libasound2-dev vulkan-validationlayers libvulkan1 libxcb-shape0-dev libxcb-xfixes0-dev fonts-noto-cjk
+      - name: CJK font fixture for Windows and macOS
+        if: runner.os != 'Linux'
+        shell: pwsh
+        run: |
+          $fixturePath = Join-Path $env:RUNNER_TEMP 'NotoSansCJKsc-Regular.otf'
+          Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf' -OutFile $fixturePath
+          if ((Get-FileHash -LiteralPath $fixturePath -Algorithm SHA256).Hash -ne '2C76254F6FC379FDDFCE0A7E84FB5385BB135D3E399294F6EEB6680D0365B74B') {
+            throw 'CJK font fixture digest mismatch'
+          }
+          $fixtureDirectory = if ($env:RUNNER_OS -eq 'Windows') {
+            Join-Path $env:LOCALAPPDATA 'Microsoft/Windows/Fonts'
+          } else {
+            Join-Path $env:HOME 'Library/Fonts'
+          }
+          New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
+          Copy-Item -LiteralPath $fixturePath -Destination $fixtureDirectory
       - name: Toolchain
         shell: bash
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy

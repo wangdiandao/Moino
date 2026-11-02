@@ -8,7 +8,9 @@ use hayro::hayro_interpret::{
 };
 use hayro::hayro_syntax::{
     Pdf,
-    object::{Array, Dict, Name, Stream},
+    content::ops::TypedInstruction,
+    object::{Array, Dict, Name, Object, Stream},
+    page::Page,
 };
 use hayro::kurbo::{Affine, BezPath, Rect};
 
@@ -17,6 +19,8 @@ struct TextDevice {
     text: String,
     missing: Vec<String>,
     glyphs: Vec<String>,
+    marked_text: std::collections::VecDeque<Option<String>>,
+    actual_text_stack: Vec<bool>,
 }
 
 impl Device<'_> for TextDevice {
@@ -37,6 +41,9 @@ impl Device<'_> for TextDevice {
             if self.glyphs.len() < 80 {
                 self.glyphs.push(format!("{identity} unicode={unicode:?}"));
             }
+            if self.actual_text_stack.contains(&true) {
+                continue;
+            }
             match unicode {
                 Some(BfString::Char(character)) => self.text.push(character),
                 Some(BfString::String(text)) => self.text.push_str(&text),
@@ -47,6 +54,47 @@ impl Device<'_> for TextDevice {
     fn draw_image(&mut self, _: Image<'_, '_>, _: ImageDrawProps<'_>) {}
     fn pop_clip(&mut self) {}
     fn pop_transparency_group(&mut self) {}
+    fn begin_marked_content(&mut self, _: &[u8], _: Option<i32>) {
+        let text = self
+            .marked_text
+            .pop_front()
+            .expect("fixture marked-content sequence");
+        if !self.actual_text_stack.contains(&true)
+            && let Some(text) = &text
+        {
+            self.text.push_str(text);
+        }
+        self.actual_text_stack.push(text.is_some());
+    }
+    fn end_marked_content(&mut self) {
+        self.actual_text_stack
+            .pop()
+            .expect("balanced marked content");
+    }
+}
+
+fn marked_text(page: &Page<'_>) -> std::collections::VecDeque<Option<String>> {
+    let mut events = std::collections::VecDeque::new();
+    let mut operations = page.typed_operations();
+    while let Some(operation) = operations.next() {
+        match operation {
+            TypedInstruction::BeginMarkedContent(_) => events.push_back(None),
+            TypedInstruction::BeginMarkedContentWithProperties(marked) => {
+                let properties = match marked.1 {
+                    Object::Dict(dict) => Some(dict.clone()),
+                    Object::Name(name) => page.resources().properties.get::<Dict<'_>>(name),
+                    _ => None,
+                };
+                events.push_back(properties.and_then(|properties| {
+                    properties
+                        .get::<hayro::hayro_syntax::object::String<'_>>(b"ActualText")
+                        .map(|text| pdf_text_string(text.as_bytes()))
+                }));
+            }
+            _ => {}
+        }
+    }
+    events
 }
 
 fn page_text(pdf: &Pdf) -> Vec<TextDevice> {
@@ -62,8 +110,15 @@ fn page_text(pdf: &Pdf) -> Vec<TextDevice> {
                 page.xref(),
                 Default::default(),
             );
-            let mut device = TextDevice::default();
+            let mut device = TextDevice {
+                marked_text: marked_text(page),
+                ..Default::default()
+            };
             interpret_page(page, &mut context, &mut device);
+            assert!(
+                device.marked_text.is_empty() && device.actual_text_stack.is_empty(),
+                "all fixture marked content was interpreted"
+            );
             device.text = device
                 .text
                 .chars()
@@ -109,7 +164,7 @@ fn font_diagnostics(pdf: &Pdf) -> String {
     output
 }
 
-fn bookmark_title(bytes: &[u8]) -> String {
+fn pdf_text_string(bytes: &[u8]) -> String {
     if let Some(bytes) = bytes.strip_prefix(&[0xfe, 0xff]) {
         assert_eq!(bytes.len() % 2, 0);
         let units = bytes
@@ -118,19 +173,40 @@ fn bookmark_title(bytes: &[u8]) -> String {
             .iter()
             .map(|unit| u16::from_be_bytes([unit[0], unit[1]]))
             .collect::<Vec<_>>();
-        String::from_utf16(&units).expect("valid UTF-16 bookmark")
+        String::from_utf16(&units).expect("valid UTF-16 PDF text")
     } else {
-        String::from_utf8(bytes.to_vec()).expect("ASCII fixture bookmark")
+        String::from_utf8(bytes.to_vec()).expect("ASCII fixture PDF text")
     }
 }
 
 #[test]
 // Spec: docs/acceptance/m0.md#技术原型
-fn pdf_search_text_preserves_actual_text_when_distinct_characters_share_a_glyph() {
-    let compiled = moino_export::compile_prototype("ΩΩ").expect("shared glyph fixture");
-    let pdf = Pdf::new(compiled.bytes().to_vec()).expect("shared glyph PDF");
+fn actual_text_overrides_glyph_mappings_for_nested_and_named_property_spans() {
+    let content = "BT /F1 12 Tf 20 40 Td /Outer BMC /Span << /ActualText <FEFF03A92126> >> BDC (OO) Tj /Span << /ActualText (ignored) >> BDC (X) Tj EMC EMC /Span /Replacement BDC (Y) Tj EMC EMC ET";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_owned(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_owned(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources << /Font << /F1 4 0 R >> /Properties << /Replacement << /ActualText (done) >> >> >> /Contents 5 0 R >>".to_owned(),
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>".to_owned(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+    ];
+    let mut bytes = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (index, object) in objects.iter().enumerate() {
+        offsets.push(bytes.len());
+        bytes.extend_from_slice(format!("{} 0 obj\n{object}\nendobj\n", index + 1).as_bytes());
+    }
+    let xref = bytes.len();
+    bytes.extend_from_slice(b"xref\n0 6\n0000000000 65535 f \n");
+    for offset in offsets {
+        bytes.extend_from_slice(format!("{offset:010} 00000 n \n").as_bytes());
+    }
+    bytes.extend_from_slice(
+        format!("trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes(),
+    );
+    let pdf = Pdf::new(bytes).expect("valid ActualText fixture PDF");
     let pages = page_text(&pdf);
-    assert_eq!(pages[0].text, "ΩΩ", "{}", font_diagnostics(&pdf));
+    assert_eq!(pages[0].text, "ΩΩdone");
 }
 
 #[test]
@@ -249,7 +325,7 @@ fn emitted_pdf_preserves_cjk_search_text_embedded_fonts_bookmarks_and_repeated_t
         let title = node
             .get::<hayro::hayro_syntax::object::String<'_>>(b"Title")
             .expect("bookmark title");
-        titles.push(bookmark_title(title.as_bytes()));
+        titles.push(pdf_text_string(title.as_bytes()));
         let destination = node
             .get::<Array<'_>>(b"Dest")
             .expect("bookmark destination");

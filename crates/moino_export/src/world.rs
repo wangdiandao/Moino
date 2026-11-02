@@ -16,6 +16,15 @@ pub(super) struct PrototypeWorld {
 
 impl PrototypeWorld {
     pub(super) fn new(text: &str) -> Self {
+        Self::with_system_fonts(text, true)
+    }
+
+    #[cfg(test)]
+    pub(super) fn without_system_fonts(text: &str) -> Self {
+        Self::with_system_fonts(text, false)
+    }
+
+    fn with_system_fonts(text: &str, include_system: bool) -> Self {
         let mut fonts = FontStore::new();
         for bytes in [
             include_bytes!("../../../assets/fonts/libertinus-serif-regular.otf").as_slice(),
@@ -28,7 +37,9 @@ impl PrototypeWorld {
                 (font, info)
             }));
         }
-        fonts.extend(system());
+        if include_system {
+            fonts.extend(system().filter(|(_, info)| !info.is_last_resort()));
+        }
         Self {
             library: LazyHash::new(Library::default()),
             source: Source::detached(text),
