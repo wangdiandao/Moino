@@ -73,6 +73,6 @@ debug = "limited"
 [profile.release]
 strip = "symbols"
 
-# Temporary M2 editor-host seams; removal is tracked in Moino #17.
+# Temporary M0/M2 editor geometry seams; removal is tracked in Moino #17.
 [patch.crates-io]
-gpui-base = { git = "https://github.com/wangdiandao/gpui-kit", rev = "abe8d3bfbef48eec253cbd99dd0dffdfd4771e76" }
+gpui-base = { git = "https://github.com/wangdiandao/gpui-kit", rev = "3610d4fb378ff195b1fd8c2481b2d345dff4a14b" }

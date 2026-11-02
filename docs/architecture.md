@@ -36,7 +36,9 @@
 
 只通过 `gpui-kit` 门面及其再导出使用 GPUI，不直接依赖 `gpui-pre`。使用默认上游后端，启用 `component` 与 `syntect`，关闭 `assets` 和 `gpui-fast`；精确版本见[依赖基线](architecture.md#依赖基线)，升级与上游补丁见[开发流程](development.md#依赖与上游)。
 
-`gpui-base 0.8.1` 的文本运行前景色、相对字号与基线偏移、任务框颜色、反向选择恢复接缝使用固定提交的临时补丁，使展开标记与上下标保持普通文本和叶坐标，任务框独立于链接配色，源码表面保留选择方向；[前景色修复](https://github.com/longbridge/gpui-kit/pull/3754)、[行内排版接缝](https://github.com/longbridge/gpui-kit/issues/3762)、[任务框配色接缝](https://github.com/longbridge/gpui-kit/issues/3763)、[选择修复](https://github.com/longbridge/gpui-kit/pull/3756)和[移除条件](https://github.com/wangdiandao/Moino/issues/17)跟踪该例外。颜色与排版值仍由 Moino 主题提供，补丁不引入产品样式。
+`gpui-base 0.8.1` 的文本运行前景色、相对字号与基线偏移、任务框颜色、反向选择恢复和 Editor 前导间距接缝使用固定提交的临时补丁，使展开标记与上下标保持普通文本和叶坐标，任务框独立于链接配色，源码表面保留选择方向，静态代码与 Editor 复用同一几何间距；[前景色修复](https://github.com/longbridge/gpui-kit/pull/3754)、[行内排版接缝](https://github.com/longbridge/gpui-kit/issues/3762)、[任务框配色接缝](https://github.com/longbridge/gpui-kit/issues/3763)、[选择修复](https://github.com/longbridge/gpui-kit/pull/3756)、[Editor 几何接缝](https://github.com/longbridge/gpui-kit/issues/3764)和[移除条件](https://github.com/wangdiandao/Moino/issues/17)跟踪该例外。颜色与排版值仍由 Moino 主题提供，补丁不引入产品样式。
+
+`EditorState::text_gutter_margin() -> Pixels` 只读暴露既有前导间距，与组件密度内边距共同决定静态代码的文字原点；[上游接口](https://github.com/longbridge/gpui-kit/pull/3765)不改变 Editor 默认布局。挂载检查使用真实文字范围而非输入容器边界。
 
 标准界面优先复用 Kit 的 `Root`、`TitleBar`、`AppMenuBar`、`NativeMenu`、`PopupMenu`、`Sidebar`、`Tree`、`VirtualList`、`Popover`、`Tooltip`、`Notification`、`Dialog`、`Resizable`、`Scrollbar`、`Form`、`Settings`、`Input`、`Select`、`Switch`、`Kbd`、`Diff`、`Editor`、`TextView`。只有缺少行为或不能表达规定几何时才在 `moino_ui` 自建，并在 PR 说明理由。产品任何位置都不嵌入网页引擎。
 

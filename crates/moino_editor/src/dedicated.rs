@@ -80,6 +80,7 @@ impl Render for DedicatedProbe {
                     .w_full()
                     // Match the external Editor's public density geometry.
                     .px(Size::XSmall.input_px())
+                    .pl(Size::XSmall.input_px() + EditorState::text_gutter_margin())
                     .py(Size::XSmall.input_py())
                     .font_family(cx.theme().mono_font_family.clone())
                     .text_base()
@@ -158,7 +159,7 @@ mod tests {
             })
             .expect("scrolled probe window")
         });
-        let (offset, slot, origin) = cx
+        let (offset, slot, origin, text_width) = cx
             .update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
                 fixture.read(cx).scroll.set_offset(point(px(0.), px(-180.)));
@@ -167,7 +168,13 @@ mod tests {
                 let offset = fixture.scroll.offset();
                 assert!(offset.y < px(0.), "fixture must actually be scrolled");
                 let origin = fixture.probe.read(cx).geometry.borrow()[&2].position_for_index(0);
-                (offset, window.find("code-slot").bounds(), origin)
+                let end = fixture.probe.read(cx).geometry.borrow()[&2].position_for_index(3);
+                (
+                    offset,
+                    window.find("code-slot").bounds(),
+                    origin,
+                    end.x - origin.x,
+                )
             })
             .expect("scrolled static geometry");
         cx.update_window(handle, |_, window, cx| window.click("mount-code", cx))
@@ -183,9 +190,16 @@ mod tests {
             let fixture = fixture.read(cx);
             assert_eq!(fixture.scroll.offset(), offset);
             assert_eq!(window.find("code-slot").bounds(), slot);
-            let active = fixture.probe.read(cx).editor.read(cx).input_bounds().origin;
-            assert!((active.x - origin.x).abs() <= px(1.));
-            assert!((active.y - origin.y).abs() <= px(1.));
+            let active = fixture
+                .probe
+                .read(cx)
+                .editor
+                .read(cx)
+                .range_to_bounds(&(0..3))
+                .expect("first Editor text range");
+            assert!((active.origin.x - origin.x).abs() <= px(1.));
+            assert!((active.origin.y - origin.y).abs() <= px(1.));
+            assert!((active.size.width - text_width).abs() <= px(1.));
             window.click("mount-code", cx);
             window.render_frame(cx);
         })
@@ -219,19 +233,26 @@ mod tests {
                 window.render_frame(cx);
                 let before = window.find("code-slot").bounds();
                 let text_origin = probe.read(cx).geometry.borrow()[&2].position_for_index(0);
+                let text_end = probe.read(cx).geometry.borrow()[&2].position_for_index(3);
                 let line_height = probe.read(cx).geometry.borrow()[&2].line_height();
                 window.click("mount-code", cx);
                 let after = window.find("code-slot").bounds();
                 assert_eq!(before, after);
-                let active = probe.read(cx).editor.read(cx).input_bounds().origin;
+                let active = probe
+                    .read(cx)
+                    .editor
+                    .read(cx)
+                    .range_to_bounds(&(0..3))
+                    .expect("first Editor text range");
                 assert!(
-                    (active.x - text_origin.x).abs() <= px(1.),
+                    (active.origin.x - text_origin.x).abs() <= px(1.),
                     "horizontal text drift: {active:?} vs {text_origin:?}"
                 );
                 assert!(
-                    (active.y - text_origin.y).abs() <= px(1.),
+                    (active.origin.y - text_origin.y).abs() <= px(1.),
                     "vertical text drift: {active:?} vs {text_origin:?}"
                 );
+                assert!((active.size.width - (text_end.x - text_origin.x)).abs() <= px(1.));
                 let active_line_height = probe
                     .read(cx)
                     .editor
