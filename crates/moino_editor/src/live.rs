@@ -200,6 +200,12 @@ impl LiveEditor {
         self.focus.clone()
     }
 
+    /// Queues active native preedit before a surface or focus transition.
+    /// The caller waits for `is_pending()` to become false before reading its result.
+    pub fn commit_composition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_composition(window, cx);
+    }
+
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.remember_scroll_anchor();
         if let Some(composition) = &mut self.composition

@@ -57,6 +57,112 @@ fn assert_single_undo(
     assert_eq!(document.selection().head().offset.value(), next);
 }
 #[test]
+// Spec: docs/modules/editing.md#输入路由
+fn unclosed_literal_block_eof_keeps_literal_input_and_single_newlines() {
+    for source in [
+        "```\n中😀",
+        "~~~\n中😀",
+        "```\n中😀\n",
+        "    中😀",
+        "<!-- 中😀",
+        "> ```\n> 中😀",
+        "- ```\n  中😀",
+    ] {
+        let caret = source.chars().count();
+        for (intent, suffix) in [(Intent::Insert("(".into()), "("), (Intent::Enter, "\n")] {
+            assert_single_undo(
+                source,
+                caret,
+                intent,
+                true,
+                &format!("{source}{suffix}"),
+                caret + 1,
+            );
+        }
+    }
+    for source in ["```\n中😀\n```", "`中😀`"] {
+        let caret = source.chars().count();
+        assert_single_undo(
+            source,
+            caret,
+            Intent::Insert("(".into()),
+            true,
+            &format!("{source}()"),
+            caret + 1,
+        );
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#tab-与缩进
+fn tab_on_a_trailing_empty_line_does_not_reindent_the_previous_list_item() {
+    for source in ["- a\n- b\n", "1. a\n2. b\n"] {
+        let caret = source.chars().count();
+        assert_single_undo(
+            source,
+            caret,
+            Intent::Tab { reverse: false },
+            false,
+            &format!("{source}    "),
+            caret + 4,
+        );
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#格式命令
+fn block_format_at_eof_targets_the_last_block_or_new_trailing_paragraph() {
+    for (source, expected, caret) in [
+        ("a\n\nb", "a\n\n## b", 7),
+        ("a\n\n", "a\n\n## ", 6),
+        ("# a\n", "# a\n## ", 7),
+    ] {
+        let end = source.chars().count();
+        assert_single_undo(
+            source,
+            end,
+            Intent::Block(BlockFormat::Heading(2)),
+            false,
+            expected,
+            caret,
+        );
+    }
+    for (format, prefix) in [
+        (BlockFormat::Heading(1), "# "),
+        (BlockFormat::Heading(6), "###### "),
+        (BlockFormat::Quote, "> "),
+        (BlockFormat::BulletList, "- "),
+        (BlockFormat::OrderedList, "1. "),
+        (BlockFormat::TaskList, "- [ ] "),
+    ] {
+        assert_single_undo(
+            "a\n\nb",
+            4,
+            Intent::Block(format),
+            false,
+            &format!("a\n\n{prefix}b"),
+            4 + prefix.chars().count(),
+        );
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#格式命令
+fn clearing_setext_heading_format_restores_a_paragraph_without_losing_following_blocks() {
+    for source in ["Title\n===", "Title\n---\n\nbody"] {
+        let (text, caret) = run(source, 0, 5, Intent::ClearFormatting, false);
+        assert_eq!(
+            text,
+            if source.ends_with("body") {
+                "Title\n\nbody"
+            } else {
+                "Title"
+            }
+        );
+        assert_eq!(caret, 5);
+    }
+}
+#[test]
 // Spec: docs/modules/editing.md#enter
 fn heading_enter_uses_cst_markers_and_keeps_outer_containers() {
     for (source, caret, expected, next) in [

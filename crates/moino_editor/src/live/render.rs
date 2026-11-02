@@ -216,6 +216,7 @@ impl Render for LiveEditor {
                             if let Some(leaf) = this
                                 .leaves
                                 .iter()
+                                .rev()
                                 .find(|leaf| leaf.raw.start <= at && at <= leaf.raw.end)
                             {
                                 this.select(selection(leaf.raw.start, leaf.raw.end), window, cx);

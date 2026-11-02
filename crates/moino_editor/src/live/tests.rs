@@ -144,6 +144,60 @@ fn open(cx: &mut TestAppContext, text: &'static str) -> (AnyWindowHandle, Entity
 }
 
 #[gpui_kit::test]
+// Spec: docs/modules/selection.md#标记展开与折叠
+fn a_separator_caret_and_empty_row_triple_click_do_not_reenter_the_previous_heading(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::test::ClickOptions;
+    use gpui_kit::{point, px};
+    let (handle, editor) = open(cx, "## title\n\n");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        editor.update(cx, |editor, cx| {
+            editor.set_selected_text_range(9..9, window, cx)
+        });
+        window.render_frame(cx);
+        let position = {
+            let state = editor.read(cx);
+            assert!(state.leaves[0].heading_badge.is_none());
+            let first = &state.geometry.borrow()[&state.leaves[0].key];
+            let caret = state
+                .caret(moino_text::ScalarOffset::new(9))
+                .expect("separator caret");
+            assert!(
+                caret.top() > first.position_for_index(0).y + first.caret_height() / 2.,
+                "separator caret must not stay on the title"
+            );
+            let last = state.leaves.last().expect("empty paragraph");
+            let geometry = &state.geometry.borrow()[&last.key];
+            geometry.position_for_index(0) + point(px(0.), geometry.caret_height() / 2.)
+        };
+        let bounds = window.find("document-editor").bounds();
+        window.click_with_options(
+            "document-editor",
+            ClickOptions::new()
+                .with_offset(position - bounds.origin)
+                .with_count(3),
+            cx,
+        );
+        assert!(
+            editor.read(cx).selection().is_collapsed(),
+            "selection {:?}, leaves {:?}",
+            editor.read(cx).selection(),
+            editor
+                .read(cx)
+                .leaves
+                .iter()
+                .map(|leaf| (leaf.raw.clone(), leaf.text.clone()))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 10);
+        assert_eq!(editor.read(cx).snapshot().revision().value(), 0);
+    })
+    .expect("separator geometry and empty-row selection");
+}
+
+#[gpui_kit::test]
 // Spec: docs/modules/editing.md#交互语法转换
 fn typing_hashes_waits_for_a_separator_before_showing_heading_state(cx: &mut TestAppContext) {
     use gpui_kit::base::text::editor_host::BlockNode;

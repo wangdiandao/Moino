@@ -166,7 +166,7 @@ fn executes_editing_and_history_vectors() {
         }
         count += 1;
     }
-    assert_eq!(count, 27);
+    assert_eq!(count, 31);
 }
 #[test]
 // Spec: docs/contracts/document-model.md#选择与映射

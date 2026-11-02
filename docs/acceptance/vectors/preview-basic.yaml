@@ -61,3 +61,19 @@
   action: secondary-end, secondary-home
   expected: "## Title\n\nend"
   description: 从末段回到标题后重新显示原始标记，正文几何由窗口回归验证。
+
+- name: heading-terminating-newline-preview
+  specs: [../../modules/selection.md#标记展开与折叠]
+  scenario: marker-expansion
+  input: "## 123\n"
+  action: secondary-end
+  expected: "123\n"
+  description: 光标越过标题终止换行进入末尾空行后折叠井号。
+
+- name: rule-terminating-newline-preview
+  specs: [../../modules/selection.md#标记展开与折叠]
+  scenario: marker-expansion
+  input: "---\n"
+  action: secondary-end
+  expected: "\n"
+  description: 空行插入点不展开前一主题分隔线。

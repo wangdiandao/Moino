@@ -231,7 +231,7 @@ pub fn resolve(
                 && start >= 2
                 && start - 2 == line_start
                 && chars[start - 2..start] == ['`', '`']
-                && !in_literal(snapshot.cst().nodes(), start)
+                && !in_literal(snapshot.cst().nodes(), start, chars.len())
             {
                 return Ok(replacement(
                     snapshot,
@@ -241,7 +241,7 @@ pub fn resolve(
                     Origin::Command,
                 ));
             }
-            if options.auto_pair && !in_literal(snapshot.cst().nodes(), start) {
+            if options.auto_pair && !in_literal(snapshot.cst().nodes(), start, chars.len()) {
                 if start == end
                     && value == "]"
                     && start > 0
@@ -269,7 +269,7 @@ pub fn resolve(
             }
             if options.auto_pair
                 && value.chars().count() == 1
-                && !in_literal(snapshot.cst().nodes(), start)
+                && !in_literal(snapshot.cst().nodes(), start, chars.len())
             {
                 let ch = value.chars().next().ok_or(EditingError)?;
                 if start == end
@@ -345,7 +345,7 @@ pub fn resolve(
             ))
         }
         Intent::Enter => {
-            if in_literal(snapshot.cst().nodes(), start) {
+            if in_literal(snapshot.cst().nodes(), start, chars.len()) {
                 return Ok(replacement(
                     snapshot,
                     range,
@@ -453,7 +453,7 @@ pub fn resolve(
                 return Ok(remove_markers(snapshot, selection, node));
             }
             if options.auto_pair
-                && !in_literal(snapshot.cst().nodes(), start)
+                && !in_literal(snapshot.cst().nodes(), start, chars.len())
                 && partner(chars[start - 1]).is_some_and(|close| chars.get(start) == Some(&close))
                 && marker_boundary(snapshot.cst().nodes(), start, true).is_none()
             {
@@ -465,7 +465,7 @@ pub fn resolve(
                     Origin::Command,
                 ));
             }
-            if in_literal(snapshot.cst().nodes(), start) {
+            if in_literal(snapshot.cst().nodes(), start, chars.len()) {
                 let previous = snapshot
                     .text()
                     .previous_grapheme(offset(start))
@@ -524,7 +524,7 @@ pub fn resolve(
             if let Some(node) = marker_boundary(snapshot.cst().nodes(), start, true) {
                 return Ok(remove_markers(snapshot, selection, node));
             }
-            if in_literal(snapshot.cst().nodes(), start) {
+            if in_literal(snapshot.cst().nodes(), start, chars.len()) {
                 let next = snapshot
                     .text()
                     .next_grapheme(offset(start))
@@ -593,7 +593,7 @@ pub fn resolve(
                 }
             }
             if start == end
-                && !in_literal(snapshot.cst().nodes(), start)
+                && !in_literal(snapshot.cst().nodes(), start, chars.len())
                 && let Some(outcome) = indentation::list_tab(snapshot, selection, &chars, reverse)
             {
                 return Ok(outcome);
@@ -701,7 +701,7 @@ pub fn resolve(
         }
         Intent::ClearFormatting => {
             let mut ranges = Vec::new();
-            collect_markers(snapshot.cst().nodes(), &range, &mut ranges);
+            collect_markers(snapshot.cst().nodes(), &range, &chars, &mut ranges);
             let mut cursor = line_start;
             let limit = if end > start && chars.get(end - 1) == Some(&'\n') {
                 end - 1
@@ -763,12 +763,15 @@ fn text_intersects(nodes: &[Node], start: usize, end: usize) -> bool {
             && (node.syntax() == &Syntax::Text || text_intersects(node.children(), start, end))
     })
 }
-fn text_block(nodes: &[Node], position: usize, document_end: usize) -> Option<&Node> {
+fn text_block<'a>(nodes: &'a [Node], position: usize, chars: &[char]) -> Option<&'a Node> {
     for node in nodes {
         if node.raw().start.value() <= position
-            && (position < node.raw().end.value() || position == document_end)
+            && (position < node.raw().end.value()
+                || (position == chars.len()
+                    && position == node.raw().end.value()
+                    && chars.last() != Some(&'\n')))
         {
-            if let Some(block) = text_block(node.children(), position, document_end) {
+            if let Some(block) = text_block(node.children(), position, chars) {
                 return Some(block);
             }
             if matches!(
@@ -788,7 +791,7 @@ fn convert_text_block(
     chars: &[char],
 ) -> Result<Option<Outcome>, EditingError> {
     let caret = selection.head().offset.value();
-    let Some(block) = text_block(snapshot.cst().nodes(), caret, chars.len()) else {
+    let Some(block) = text_block(snapshot.cst().nodes(), caret, chars) else {
         return Ok(None);
     };
     let raw_start = block.raw().start.value();
@@ -993,11 +996,28 @@ fn remove_markers(snapshot: &Snapshot, selection: Selection, node: &Node) -> Out
 fn collect_markers(
     nodes: &[Node],
     selected: &Range<ScalarOffset>,
+    chars: &[char],
     output: &mut Vec<Range<ScalarOffset>>,
 ) {
     for node in nodes {
         if node.raw().end < selected.start || node.raw().start > selected.end {
             continue;
+        }
+        if matches!(node.syntax(), Syntax::Heading(_)) {
+            let mut end = node.raw().end.value();
+            while end > node.raw().start.value() && chars[end - 1] == '\n' {
+                end -= 1;
+            }
+            let intersects = if selected.is_empty() {
+                node.raw().start <= selected.start && selected.start <= offset(end)
+            } else {
+                node.raw().start < selected.end && selected.start < offset(end)
+            };
+            if intersects {
+                output.push(node.opening_marker());
+                let closing = node.closing_marker();
+                output.push(closing.start..closing.end.min(offset(end)));
+            }
         }
         if matches!(
             node.syntax(),
@@ -1017,7 +1037,7 @@ fn collect_markers(
             output.push(node.opening_marker());
             output.push(node.closing_marker());
         }
-        collect_markers(node.children(), selected, output);
+        collect_markers(node.children(), selected, chars, output);
     }
 }
 fn partner(ch: char) -> Option<char> {
@@ -1188,18 +1208,26 @@ fn renumber_following(
     }
     outcome.transaction = Some(transaction);
 }
-fn in_literal(nodes: &[Node], position: usize) -> bool {
+fn in_literal(nodes: &[Node], position: usize, document_end: usize) -> bool {
     nodes.iter().any(|node| {
+        let literal = matches!(
+            node.syntax(),
+            Syntax::CodeBlock(_)
+                | Syntax::MathBlock
+                | Syntax::HtmlBlock
+                | Syntax::FrontMatter
+                | Syntax::Code
+        );
+        let open_end = position == document_end
+            && position == node.raw().end.value()
+            && literal
+            && node.syntax() != &Syntax::Code
+            && node.closing_marker().is_empty();
         node.raw().start.value() <= position
-            && position < node.raw().end.value()
-            && (matches!(
-                node.syntax(),
-                Syntax::CodeBlock(_)
-                    | Syntax::MathBlock
-                    | Syntax::HtmlBlock
-                    | Syntax::FrontMatter
-                    | Syntax::Code
-            ) || in_literal(node.children(), position))
+            && (position < node.raw().end.value()
+                || position == document_end && position == node.raw().end.value())
+            && ((literal && (position < node.raw().end.value() || open_end))
+                || in_literal(node.children(), position, document_end))
     })
 }
 fn is_inline_code_closer(nodes: &[Node], position: ScalarOffset) -> bool {

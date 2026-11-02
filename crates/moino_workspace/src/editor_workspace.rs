@@ -118,7 +118,7 @@ impl EditorWorkspace {
                     && let Some(mode) = this.requested_mode.take()
                     && mode != this.is_source
                 {
-                    this.toggle_source(&ToggleSource, window, cx);
+                    this.apply_source_mode(mode, window, cx);
                 }
                 cx.notify();
             }),
@@ -139,20 +139,33 @@ impl EditorWorkspace {
         }
     }
     fn toggle_source(&mut self, _: &ToggleSource, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editor.read(cx).is_pending() {
-            self.requested_mode = Some(!self.requested_mode.unwrap_or(self.is_source));
-            cx.notify();
-            return;
-        }
+        let target = !self.requested_mode.unwrap_or(self.is_source);
         if self.is_source {
             self.source
                 .update(cx, |source, cx| source.leave(window, cx));
+        } else {
+            self.editor
+                .update(cx, |editor, cx| editor.commit_composition(window, cx));
+        }
+        if self.editor.read(cx).is_pending() {
+            self.requested_mode = Some(target);
+            cx.notify();
+            return;
+        }
+        self.requested_mode = None;
+        self.apply_source_mode(target, window, cx);
+    }
+    fn apply_source_mode(&mut self, target: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if target == self.is_source {
+            return;
+        }
+        if !target {
             window.focus(&self.editor.read(cx).focus_handle(), cx);
         } else {
             self.source
                 .update(cx, |source, cx| source.focus(window, cx));
         }
-        self.is_source = !self.is_source;
+        self.is_source = target;
         cx.notify();
     }
     fn toggle_appearance(&mut self, _: &ToggleAppearance, _: &mut Window, cx: &mut Context<Self>) {
@@ -316,6 +329,76 @@ mod tests {
     use super::{EditorWorkspace, init};
     use gpui_kit::test::TestWindowExt;
     use gpui_kit::{AppContext, TestAppContext};
+
+    #[gpui_kit::test]
+    // Spec: docs/modules/editing.md#输入法组合
+    fn switching_to_source_waits_for_live_preedit_before_accepting_source_input(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui_kit::ElementInputHandler;
+        use gpui_kit::test::TestInput;
+        cx.update(init);
+        let (handle, workspace) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| EditorWorkspace::new(window, cx))
+            })
+            .expect("workspace")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let editor = workspace.read(cx).editor.clone();
+            let bounds = window.find("document-editor").bounds();
+            let mut input = TestInput::new(ElementInputHandler::new(bounds, editor), window);
+            input.compose_text(None, "中", Some(1..1), cx);
+            for _ in 0..3 {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_source(&super::ToggleSource, window, cx)
+                });
+            }
+            assert!(
+                !workspace.read(cx).is_source,
+                "a new source surface must not observe the pre-composition snapshot"
+            );
+        })
+        .expect("composition mode barrier");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(workspace.read(cx).is_source);
+            window.input("X", cx);
+        })
+        .expect("source input after composition");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                workspace
+                    .read(cx)
+                    .editor
+                    .read(cx)
+                    .snapshot()
+                    .text()
+                    .to_string(),
+                "中X"
+            )
+        });
+        for expected in ["中", ""] {
+            cx.update_window(handle, |_, window, cx| window.press("secondary-z", cx))
+                .expect("shared undo");
+            cx.run_until_parked();
+            cx.update(|cx| {
+                assert_eq!(
+                    workspace
+                        .read(cx)
+                        .editor
+                        .read(cx)
+                        .snapshot()
+                        .text()
+                        .to_string(),
+                    expected
+                )
+            });
+        }
+    }
 
     #[gpui_kit::test]
     // Spec: docs/modules/menus-dialogs.md

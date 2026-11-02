@@ -61,6 +61,38 @@
     4. three
   description: 列表 Enter 与后续同级编号修改属于同一事务
 
+- name: eof-heading-format-targets-last-block
+  specs: [../../modules/editing.md#格式命令]
+  scenario: formatting-toggle
+  input: "a\n\nb█"
+  action: block.heading1
+  expected: "a\n\n# b█"
+  description: 文档末尾转换最后一段，保留第一段。
+
+- name: clear-setext-heading-format
+  specs: [../../modules/editing.md#格式命令]
+  scenario: formatting-toggle
+  input: "｢Title｣\n==="
+  action: edit.clearFormatting
+  expected: ｢Title｣
+  description: 清除 Setext 标题格式，保留正文和选择。
+
+- name: tab-after-list-terminating-newline
+  specs: [../../modules/editing.md#tab-与缩进]
+  scenario: tab-indentation
+  input: "- a\n- b\n█"
+  action: tab
+  expected: "- a\n- b\n    █"
+  description: 末尾空行按段落缩进，不改变上一列表项。
+
+- name: enter-at-unclosed-fence-eof
+  specs: [../../modules/editing.md#输入路由, ../../modules/editing.md#enter]
+  scenario: enter-splits-paragraph
+  input: "```\na█"
+  action: enter
+  expected: "```\na\n█"
+  description: 未闭合围栏的文档末尾仍为字面输入上下文。
+
 - name: clear-formatting-removes-block-and-inline-markers
   specs: [../../modules/editing.md#格式命令]
   scenario: formatting-toggle

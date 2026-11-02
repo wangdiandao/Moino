@@ -105,7 +105,10 @@ impl Builder<'_> {
         self.boundaries.push((self.text.len(), range.end));
     }
 
-    fn expanded(&self, range: Range<ScalarOffset>) -> bool {
+    fn expanded(&self, mut range: Range<ScalarOffset>) -> bool {
+        while range.end > range.start && self.source[range.end.value() - 1] == '\n' {
+            range.end = ScalarOffset::new(range.end.value() - 1);
+        }
         let selection = self.selection.range();
         if self.selection.is_collapsed() {
             range.start <= selection.start && selection.start <= range.end
@@ -625,6 +628,59 @@ pub(super) fn compose(mut leaves: Vec<Leaf>, range: Range<ScalarOffset>, text: &
 mod tests {
     use super::*;
     use moino_document::{Document, DocumentId, Epoch};
+
+    #[test]
+    // Spec: docs/modules/selection.md#标记展开与折叠
+    fn block_terminating_newlines_do_not_keep_the_previous_heading_expanded() {
+        for level in 1_u8..=6 {
+            for suffix in ["\n", "\n\n", "\n\nbody"] {
+                let heading = format!("{} 中😀", "#".repeat(usize::from(level)));
+                let source = format!("{heading}{suffix}");
+                let document = Document::new(DocumentId::new(1), Epoch::new(0), &source);
+                let end = heading.chars().count();
+                for caret in [end, end + 1] {
+                    let leaves = project(
+                        &document.snapshot(),
+                        Selection::cursor(ScalarOffset::new(caret)),
+                        moino_theme::BuiltinTheme::Paper,
+                    );
+                    assert_eq!(
+                        leaves[0].heading_badge,
+                        (caret == end).then_some(level),
+                        "{source:?} at {caret}"
+                    );
+                    assert_eq!(
+                        matches!(leaves[0].block, BlockNode::Heading { .. }),
+                        caret != end,
+                        "{source:?} at {caret}"
+                    );
+                }
+            }
+        }
+        for source in [
+            "Title\n===\n",
+            "Title\n---\n",
+            "> ## title\n",
+            "- ## title\n",
+        ] {
+            let document = Document::new(DocumentId::new(1), Epoch::new(0), source);
+            let leaves = project(
+                &document.snapshot(),
+                Selection::cursor(document.snapshot().text().len()),
+                moino_theme::BuiltinTheme::Paper,
+            );
+            assert!(leaves[0].heading_badge.is_none(), "{source:?}");
+        }
+        for source in ["---\n", "***\n\n"] {
+            let document = Document::new(DocumentId::new(1), Epoch::new(0), source);
+            let leaves = project(
+                &document.snapshot(),
+                Selection::cursor(ScalarOffset::new(4)),
+                moino_theme::BuiltinTheme::Paper,
+            );
+            assert!(leaves[0].rule, "{source:?}");
+        }
+    }
 
     #[test]
     // Spec: docs/modules/selection.md#标记展开与折叠

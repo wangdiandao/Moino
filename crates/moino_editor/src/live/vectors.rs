@@ -136,7 +136,7 @@ fn formal_editing_vectors_use_native_events_and_shared_actions(cx: &mut TestAppC
         });
         count += 1;
     }
-    assert_eq!(count, 27);
+    assert_eq!(count, 31);
 }
 
 #[gpui_kit::test]
@@ -207,5 +207,5 @@ fn formal_preview_vectors_use_the_production_surface_and_native_keys(cx: &mut Te
         .expect("preview and geometry");
         count += 1;
     }
-    assert_eq!(count, 8);
+    assert_eq!(count, 10);
 }
