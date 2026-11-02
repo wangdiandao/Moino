@@ -1,7 +1,10 @@
 //! Independent inspection of the emitted PDF, rather than compiler-side layout claims.
 use hayro::hayro_interpret::{
-    BlendMode, ClipPath, Context, Device, DrawMode, DrawProps, Image, ImageDrawProps,
-    InterpreterCache, SoftMask, font::GlyphRun, hayro_cmap::BfString, interpret_page,
+    BlendMode, CacheKey, ClipPath, Context, Device, DrawMode, DrawProps, Image, ImageDrawProps,
+    InterpreterCache, SoftMask,
+    font::{Glyph, GlyphRun},
+    hayro_cmap::BfString,
+    interpret_page,
 };
 use hayro::hayro_syntax::{
     Pdf,
@@ -12,6 +15,8 @@ use hayro::kurbo::{Affine, BezPath, Rect};
 #[derive(Default)]
 struct TextDevice {
     text: String,
+    missing: Vec<String>,
+    glyphs: Vec<String>,
 }
 
 impl Device<'_> for TextDevice {
@@ -20,12 +25,22 @@ impl Device<'_> for TextDevice {
     fn push_transparency_group(&mut self, _: f32, _: Option<SoftMask<'_>>, _: BlendMode) {}
     fn draw_glyph_run(&mut self, run: &GlyphRun<'_, '_>, _: DrawProps<'_>, _: &DrawMode) {
         for glyph in run.glyphs() {
-            match glyph
-                .as_unicode()
-                .expect("fixture glyph has a Unicode mapping")
-            {
-                BfString::Char(character) => self.text.push(character),
-                BfString::String(text) => self.text.push_str(&text),
+            let identity = match &**glyph {
+                Glyph::Outline(outline) => format!(
+                    "font={:x} glyph={:?}",
+                    outline.font_cache_key(),
+                    outline.glyph_id()
+                ),
+                Glyph::Type3(_) => "type3".to_owned(),
+            };
+            let unicode = glyph.as_unicode();
+            if self.glyphs.len() < 80 {
+                self.glyphs.push(format!("{identity} unicode={unicode:?}"));
+            }
+            match unicode {
+                Some(BfString::Char(character)) => self.text.push(character),
+                Some(BfString::String(text)) => self.text.push_str(&text),
+                None => self.missing.push(identity),
             }
         }
     }
@@ -34,7 +49,7 @@ impl Device<'_> for TextDevice {
     fn pop_transparency_group(&mut self) {}
 }
 
-fn page_text(pdf: &Pdf) -> Vec<String> {
+fn page_text(pdf: &Pdf) -> Vec<TextDevice> {
     let cache = InterpreterCache::new();
     pdf.pages()
         .iter()
@@ -49,13 +64,49 @@ fn page_text(pdf: &Pdf) -> Vec<String> {
             );
             let mut device = TextDevice::default();
             interpret_page(page, &mut context, &mut device);
-            device
+            device.text = device
                 .text
                 .chars()
                 .filter(|character| !character.is_whitespace())
-                .collect()
+                .collect();
+            device
         })
         .collect()
+}
+
+fn font_diagnostics(pdf: &Pdf) -> String {
+    let mut output = String::new();
+    let mut visited = std::collections::HashSet::new();
+    for page in pdf.pages().iter() {
+        for name in page.resources().fonts.keys() {
+            let font = page.resources().get_font(&name).expect("font resource");
+            let key = font.cache_key();
+            if !visited.insert(key) {
+                continue;
+            }
+            output.push_str(&format!(
+                "font={key:x} resource={name:?} base={:?} subtype={:?} encoding={:?}\n",
+                font.get::<Name<'_>>(b"BaseFont"),
+                font.get::<Name<'_>>(b"Subtype"),
+                font.get::<Name<'_>>(b"Encoding")
+            ));
+            for field in [b"ToUnicode".as_slice(), b"Encoding"] {
+                if let Some(stream) = font.get::<Stream<'_>>(field) {
+                    let decoded = stream.decoded().expect("decoded font map");
+                    output.push_str(&format!(
+                        "{}:\n{}\n",
+                        String::from_utf8_lossy(field),
+                        String::from_utf8_lossy(&decoded)
+                    ));
+                }
+            }
+        }
+        output.push_str(&format!(
+            "page content:\n{}\n",
+            String::from_utf8_lossy(page.page_stream().unwrap_or_default())
+        ));
+    }
+    output
 }
 
 fn bookmark_title(bytes: &[u8]) -> String {
@@ -75,6 +126,15 @@ fn bookmark_title(bytes: &[u8]) -> String {
 
 #[test]
 // Spec: docs/acceptance/m0.md#技术原型
+fn pdf_search_text_preserves_actual_text_when_distinct_characters_share_a_glyph() {
+    let compiled = moino_export::compile_prototype("ΩΩ").expect("shared glyph fixture");
+    let pdf = Pdf::new(compiled.bytes().to_vec()).expect("shared glyph PDF");
+    let pages = page_text(&pdf);
+    assert_eq!(pages[0].text, "ΩΩ", "{}", font_diagnostics(&pdf));
+}
+
+#[test]
+// Spec: docs/acceptance/m0.md#技术原型
 fn emitted_pdf_preserves_cjk_search_text_embedded_fonts_bookmarks_and_repeated_table_headers() {
     let mut source = String::from(
         "#set page(width: 220pt, height: 190pt, margin: 12pt)\n#set text(size: 10pt)\n= Moino\n中文测试。日本語の検証。한국어 검증.\n\n= Repeated table header\n#table(columns: 2, table.header([M0 header], [Value]),\n",
@@ -87,8 +147,41 @@ fn emitted_pdf_preserves_cjk_search_text_embedded_fonts_bookmarks_and_repeated_t
     assert!(compiled.warnings().is_empty(), "{:?}", compiled.warnings());
     let pdf = Pdf::new(compiled.bytes().to_vec()).expect("parsed emitted PDF");
     assert!(pdf.pages().len() >= 3);
-    let pages = page_text(&pdf);
+    let decoded = page_text(&pdf);
+    let pages = decoded
+        .iter()
+        .map(|page| page.text.as_str())
+        .collect::<Vec<_>>();
     let text = pages.join("");
+    let diagnostics = font_diagnostics(&pdf);
+    let directory = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/m0");
+    std::fs::create_dir_all(&directory).expect("M0 evidence directory");
+    std::fs::write(
+        directory.join("cjk-search-regression.pdf"),
+        compiled.bytes(),
+    )
+    .expect("PDF evidence");
+    let glyphs = decoded
+        .iter()
+        .enumerate()
+        .map(|(index, page)| {
+            format!(
+                "page={index} missing={:?}\nglyphs={}\n",
+                page.missing,
+                page.glyphs.join("\n")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(
+        directory.join("cjk-search-fonts.txt"),
+        format!("{diagnostics}\n{glyphs}"),
+    )
+    .expect("font evidence");
+    assert!(
+        decoded.iter().all(|page| page.missing.is_empty()),
+        "missing glyph Unicode mappings; actual PDF, font maps, content and glyphs retained in target/m0/cjk-search-*"
+    );
     for expected in [
         "Moino",
         "中文测试。",
