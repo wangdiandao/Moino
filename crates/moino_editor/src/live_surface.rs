@@ -60,7 +60,11 @@ impl Element for LiveSurface {
         *self.geometry.borrow_mut() = geometry;
         let editor = self.editor.downgrade();
         window.on_next_frame(move |_, cx| {
-            let _ = editor.update(cx, |editor, cx| editor.ensure_caret_visible(cx)); // Closed editor has no scroll target.
+            let _ = editor.update(cx, |editor, cx| {
+                if !editor.restore_scroll_anchor(cx) {
+                    editor.ensure_caret_visible(cx);
+                }
+            }); // Closed editor has no scroll target.
         });
     }
     fn paint(

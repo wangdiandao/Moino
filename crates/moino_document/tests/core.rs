@@ -11,6 +11,47 @@ fn document(text: &str) -> Document {
 }
 
 #[test]
+// Spec: docs/contracts/document-model.md#选择与映射
+fn history_selection_mapping_uses_each_step_of_a_merged_group() {
+    let mut doc = document("abcd");
+    doc.set_selection(Selection::cursor(p(2))).expect("cursor");
+    for (at, text) in [(2, "中"), (3, "😀")] {
+        let transaction = Transaction::new(&doc.snapshot(), Origin::Typing)
+            .with_edit(Edit::new(p(at)..p(at), text))
+            .with_group(HistoryGroup::new(1));
+        doc.commit(transaction, Duration::ZERO).expect("typing");
+    }
+    let reverse = Selection::new(
+        Endpoint {
+            offset: p(5),
+            affinity: Affinity::After,
+        },
+        Endpoint {
+            offset: p(1),
+            affinity: Affinity::Before,
+        },
+    );
+    let undo = doc
+        .undo_request()
+        .expect("undo request")
+        .prepare()
+        .expect("prepare undo");
+    let mapped = undo.map_selection(reverse);
+    assert_eq!(mapped.anchor().offset, p(3));
+    assert_eq!(mapped.head().offset, p(1));
+    assert!(!mapped.is_forward());
+    doc.apply_history(undo).expect("undo");
+    let redo = doc
+        .redo_request()
+        .expect("redo request")
+        .prepare()
+        .expect("prepare redo");
+    assert_eq!(redo.map_selection(mapped), reverse);
+    doc.apply_history(redo).expect("redo");
+    assert_eq!(doc.snapshot().text().to_string(), "ab中😀cd");
+}
+
+#[test]
 // Spec: docs/contracts/document-model.md#事务契约
 fn rejects_stale_overlapping_and_out_of_bounds_commits_atomically() {
     let mut doc = document("a墨😀z");

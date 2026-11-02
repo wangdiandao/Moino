@@ -21,6 +21,22 @@ pub fn body_size() -> Rems {
 pub fn code_size() -> Rems {
     rems(14. / 13.)
 }
+/// Relative size of an inline superscript or subscript.
+pub const fn inline_script_scale() -> f32 {
+    0.75
+}
+/// Baseline shift in enclosing-font ems; positive values move text down.
+pub const fn inline_script_shift(superscript: bool) -> f32 {
+    if superscript { -0.35 } else { 0.2 }
+}
+/// Width of one list marker column, shared with virtualized continuation rows.
+pub fn list_indent() -> Rems {
+    body_size() * 1.4
+}
+/// Inset after a quote border, shared with virtualized container prefixes.
+pub fn quote_inset() -> Rems {
+    body_size() * 0.9
+}
 
 /// Builds rich-text presentation from the effective built-in theme.
 pub fn text_style(cx: &App) -> TextViewStyle {
@@ -29,6 +45,7 @@ pub fn text_style(cx: &App) -> TextViewStyle {
         .try_global::<ThemeState>()
         .map_or(BuiltinTheme::Paper, |state| state.theme);
     let heading = theme.color(0x17201C, 0xE2E9E4);
+    let heading_rule = cx.theme().border;
     TextViewStyle::default()
         .with_foreground(cx.theme().foreground)
         .with_muted_foreground(cx.theme().muted_foreground)
@@ -36,13 +53,30 @@ pub fn text_style(cx: &App) -> TextViewStyle {
         .with_selection(cx.theme().selection)
         .with_border(cx.theme().border)
         .with_code_background(theme.code_background())
+        .with_inline_code(HighlightStyle::default())
+        .with_task_colors(
+            theme.task_border(),
+            theme.task_checked_background(),
+            theme.task_check(),
+        )
+        .with_blockquote_style(
+            StyleRefinement::default()
+                .border_color(theme.quote_border())
+                .text_color(theme.quote_text())
+                .pl(quote_inset()),
+        )
         .with_dark(theme == BuiltinTheme::Inkstone)
         .with_heading(move |level| {
             let font = [36., 28., 24., 20., 16., 16.][usize::from(level.clamp(1, 6) - 1)];
-            StyleRefinement::default()
+            let style = StyleRefinement::default()
                 .text_size(rems(font / 13.))
                 .line_height(relative(1.3))
-                .text_color(heading)
+                .text_color(heading);
+            if level <= 2 {
+                style.border_b_1().border_color(heading_rule)
+            } else {
+                style
+            }
         })
 }
 
@@ -91,6 +125,42 @@ impl BuiltinTheme {
     /// Foreground for expanded source delimiters.
     pub fn marker(self) -> Hsla {
         self.color(0x9AA69F, 0x5E6D65)
+    }
+    /// Background of the documented inline highlight mark.
+    pub fn mark_background(self) -> Hsla {
+        self.color(0xF4E8A8, 0x4E4724)
+    }
+    /// Border of a quoted block.
+    pub fn quote_border(self) -> Hsla {
+        self.color(0xC9D6CE, 0x2F4A3E)
+    }
+    /// Foreground of a quoted block.
+    pub fn quote_text(self) -> Hsla {
+        self.color(0x4A5550, 0xA9B6AE)
+    }
+    /// Border of an expanded H3–H6 badge.
+    pub fn heading_badge_border(self) -> Hsla {
+        self.color(0xC9CFCB, 0x3A4740)
+    }
+    /// Foreground of an expanded H3–H6 badge.
+    pub fn heading_badge_text(self) -> Hsla {
+        self.color(0x6B756F, 0x93A299)
+    }
+    /// Border of an unchecked task marker.
+    pub fn task_border(self) -> Hsla {
+        self.color(0x8C9690, 0x6E7D75)
+    }
+    /// Background of a checked task marker.
+    pub fn task_checked_background(self) -> Hsla {
+        self.color(0x2D6A4F, 0x5DB38A)
+    }
+    /// Foreground of the task check.
+    pub fn task_check(self) -> Hsla {
+        self.color(0xFFFFFF, 0x0D1210)
+    }
+    /// Thematic separator in the document body.
+    pub fn rule(self) -> Hsla {
+        self.color(0xDDDBD2, 0x2C3832)
     }
     /// Flat code surface background.
     pub fn code_background(self) -> Hsla {
@@ -367,6 +437,20 @@ mod tests {
                     u64::try_from(ix + 1).expect("revision")
                 );
                 assert_eq!(cx.theme().font_family.as_ref(), "Inter");
+                let style = super::text_style(cx);
+                assert_eq!(
+                    style
+                        .inline_code()
+                        .background_color
+                        .unwrap_or(style.code_background()),
+                    theme.code_background()
+                );
+                assert_eq!(style.task_border(), theme.task_border());
+                assert_eq!(
+                    style.task_checked_background(),
+                    theme.task_checked_background()
+                );
+                assert_eq!(style.task_check(), theme.task_check());
             }
             apply(BuiltinTheme::Inkstone, cx);
             assert_eq!(cx.global::<ThemeState>().revision(), 2);

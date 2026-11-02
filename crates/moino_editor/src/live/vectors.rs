@@ -138,3 +138,74 @@ fn formal_editing_vectors_use_native_events_and_shared_actions(cx: &mut TestAppC
     }
     assert_eq!(count, 26);
 }
+
+#[gpui_kit::test]
+// Spec: docs/modules/selection.md#标记展开与折叠
+fn formal_preview_vectors_use_the_production_surface_and_native_keys(cx: &mut TestAppContext) {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/acceptance/vectors");
+    let vectors = moino_testkit::load_vectors(&root).expect("formal vectors");
+    cx.update(|cx| {
+        gpui_kit::init(cx);
+        moino_theme::register_fonts(cx).expect("fonts");
+        moino_theme::apply(moino_theme::BuiltinTheme::Paper, cx);
+        crate::init(cx);
+    });
+    let mut count = 0;
+    for vector in vectors.iter().filter(|vector| {
+        vector
+            .source()
+            .file_name()
+            .is_some_and(|name| name == "preview-basic.yaml")
+    }) {
+        let (handle, editor) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                let editor = cx.new(|cx| {
+                    LiveEditor::new(
+                        vector.input(),
+                        Options::new("    ", true).expect("policy"),
+                        cx,
+                    )
+                });
+                window.focus(&editor.read(cx).focus_handle(), cx);
+                editor
+            })
+            .expect("preview window")
+        });
+        for key in vector.action().expect("preview keys").split(", ") {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.press(key, cx);
+            })
+            .expect("native navigation");
+            cx.run_until_parked();
+        }
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let editor = editor.read(cx);
+            assert_eq!(
+                editor
+                    .leaves
+                    .iter()
+                    .map(|leaf| leaf.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                vector.expected(),
+                "{}",
+                vector.name()
+            );
+            assert_eq!(
+                editor.snapshot().text().to_string(),
+                vector.input(),
+                "{}",
+                vector.name()
+            );
+            assert_eq!(editor.snapshot().revision().value(), 0);
+            assert!(!editor.is_dirty() && !editor.document.has_undo());
+            assert!(editor.geometry.borrow().contains_key(&editor.leaves[0].key));
+        })
+        .expect("preview and geometry");
+        count += 1;
+    }
+    assert_eq!(count, 6);
+}

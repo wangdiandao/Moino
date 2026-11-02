@@ -7,6 +7,7 @@ mod live;
 mod live_surface;
 mod projection;
 mod source;
+mod source_change;
 mod source_highlight;
 pub use live::{LiveEditor, Redo, Undo};
 pub use source::SourceEditor;

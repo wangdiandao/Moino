@@ -22,7 +22,7 @@
 | 场景 | 判定章节 | 数据 |
 |---|---|---|
 | <a id="selection-direction"></a>选择语义方向 | [正文](../modules/selection.md#逻辑选择) | [sel-basic.yaml](vectors/sel-basic.yaml) |
-| <a id="marker-expansion"></a>标记展开与折叠 | [正文](../modules/selection.md#标记展开与折叠) | [sel-basic.yaml](vectors/sel-basic.yaml) |
+| <a id="marker-expansion"></a>标记展开与折叠 | [正文](../modules/selection.md#标记展开与折叠) | [sel-basic.yaml](vectors/sel-basic.yaml)、[preview-basic.yaml](vectors/preview-basic.yaml) |
 | <a id="multiple-click-selection"></a>多击 | [正文](../modules/selection.md#多击与拖选) | 待补充 |
 | <a id="caret-visibility"></a>滚动保障 | [正文](../modules/selection.md#滚动保障) | 待补充 |
 
@@ -66,6 +66,6 @@
 
 ## 覆盖边界
 
-标记展开场景的数据实际检查位置映射；段落 Enter 场景也关联选区替换。这些既有关系不表示对应行为已充分覆盖，须补全而不能仅靠改名修饰。主题场景中的字号、缩放、双向文字交叉判定还依赖[未决细节](../planned.md#partial-i18n)。
+`sel-basic.yaml` 中标记展开场景的数据检查位置映射，`preview-basic.yaml` 检查真实编辑表面的显示文本及非修改性；样式、命中和几何仍须由对应的 GPUI 回归验证。段落 Enter 场景也关联选区替换；这些关系不能仅靠改名当作充分覆盖。主题场景中的字号、缩放、双向文字交叉判定还依赖[未决细节](../planned.md#partial-i18n)。
 
 组合提交的文本向量检查提交事务与配对隔离，不验证原生候选窗或界面的临时组合态。

@@ -1,0 +1,47 @@
+- name: collapsed-strong-preview
+  specs: [../../modules/selection.md#标记展开与折叠]
+  scenario: marker-expansion
+  input: '**中😀** end'
+  action: secondary-end
+  expected: '中😀 end'
+  description: 离开粗体后折叠标记，保持正文和文档修订。
+
+- name: expanded-strong-preview
+  specs: [../../modules/selection.md#标记展开与折叠]
+  scenario: marker-expansion
+  input: '**中😀** end'
+  action: secondary-end, secondary-home, right
+  expected: '**中😀** end'
+  description: 返回语法内部后显示标记，光标按原文标量移动。
+
+- name: nested-mark-preview
+  specs: [../../modules/selection.md#标记展开与折叠]
+  scenario: marker-expansion
+  input: '**a *中* z** end'
+  action: right, right, right
+  expected: '**a 中 z** end'
+  description: 外层展开不强制展开未相交的内层语法。
+
+- name: highlight-preview
+  specs: [../../modules/selection.md#标记展开与折叠, ../../design/ink-theme.md#正文颜色]
+  scenario: marker-expansion
+  input: '==中😀== end'
+  action: secondary-end
+  expected: '中😀 end'
+  description: 高亮使用正文投影而非显示源码标记。
+
+- name: script-preview
+  specs: [../../modules/selection.md#标记展开与折叠, ../../design/typography.md#字体角色]
+  scenario: marker-expansion
+  input: 'a ~中😀~ b ^上标^ end'
+  action: secondary-end
+  expected: 'a 中😀 b 上标 end'
+  description: 上下标保留可编辑文本，字号和基线另由真实样式与几何断言验证。
+
+- name: folded-heading-preview
+  specs: [../../modules/selection.md#标记展开与折叠]
+  scenario: marker-expansion
+  input: "# Title\n\nend"
+  action: secondary-end
+  expected: "Title\n\nend"
+  description: 移到末段后标题折叠，使用标题排版。

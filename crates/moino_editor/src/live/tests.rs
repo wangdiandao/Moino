@@ -25,6 +25,57 @@ fn queued_native_selection_maps_through_earlier_edits(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+// Spec: docs/contracts/document-model.md#选择与映射
+fn selection_events_during_undo_and_redo_map_through_the_actual_history_steps(
+    cx: &mut TestAppContext,
+) {
+    let (handle, editor) = open(cx, "abcd");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        editor.update(cx, |editor, cx| {
+            editor.set_selected_text_range(2..2, window, cx)
+        });
+        window.input("X", cx);
+    })
+    .expect("insert");
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-z", cx);
+        editor.update(cx, |editor, cx| {
+            editor.set_selected_text_range(3..3, window, cx)
+        });
+    })
+    .expect("selection during undo");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(editor.read(cx).snapshot().text().to_string(), "abcd");
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 2);
+        assert!(editor.read(cx).error_code().is_none());
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.press("secondary-shift-z", cx);
+        editor.update(cx, |editor, cx| {
+            editor.select_source(
+                super::selection(
+                    moino_text::ScalarOffset::new(3),
+                    moino_text::ScalarOffset::new(1),
+                ),
+                window,
+                cx,
+            )
+        });
+    })
+    .expect("backward selection during redo");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(editor.read(cx).snapshot().text().to_string(), "abXcd");
+        assert_eq!(editor.read(cx).selection().anchor().offset.value(), 4);
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 1);
+        assert!(editor.read(cx).error_code().is_none());
+    });
+}
+
+#[gpui_kit::test]
 // Spec: docs/modules/editing.md#输入法组合
 fn moving_the_native_caret_commits_preedit_before_selecting_display_coordinates(
     cx: &mut TestAppContext,
@@ -113,6 +164,117 @@ fn queued_native_typing_and_block_commands_preserve_order(cx: &mut TestAppContex
 }
 
 #[gpui_kit::test]
+// Spec: docs/architecture.md#关键接缝
+fn cut_and_copy_observe_the_selection_after_queued_edits(cx: &mut TestAppContext) {
+    let (handle, editor) = open(cx, "");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.input("中😀a", cx);
+        window.press("secondary-a", cx);
+        window.press("secondary-c", cx);
+    })
+    .expect("queued copy");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("中😀a")
+        )
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.input("replacement", cx);
+        window.press("secondary-a", cx);
+        window.press("secondary-x", cx);
+    })
+    .expect("queued cut");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .as_deref(),
+            Some("replacement")
+        );
+        assert_eq!(editor.read(cx).snapshot().text().to_string(), "");
+    });
+}
+
+#[gpui_kit::test]
+// Spec: docs/modules/editing.md#输入路由
+fn readonly_surface_rejects_native_preedit_typing_and_history(cx: &mut TestAppContext) {
+    let (handle, editor) = open(cx, "protected");
+    cx.update_window(handle, |_, window, cx| {
+        editor.update(cx, |editor, _| {
+            editor.options = editor.options.clone().read_only(true)
+        });
+        window.render_frame(cx);
+        let bounds = window.find("document-editor").bounds();
+        {
+            let mut input =
+                TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window);
+            input.compose_text(None, "中", None, cx);
+            assert!(input.marked_text_range(cx).is_none());
+        }
+        window.input("X", cx);
+        window.press("secondary-z", cx);
+        window.press("secondary-shift-z", cx);
+    })
+    .expect("readonly inputs");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(editor.read(cx).snapshot().text().to_string(), "protected");
+        assert_eq!(editor.read(cx).snapshot().revision().value(), 0);
+    });
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let alert = window.find("editor-error");
+        assert!(alert.visible());
+        assert_eq!(
+            alert.label(),
+            Some(moino_ui::editing_error("editing.unavailable").as_ref())
+        );
+        assert!(alert.bounds().bottom() <= window.find("document-editor").bounds().bottom());
+        editor.update(cx, |editor, _| {
+            editor.options = editor.options.clone().read_only(false)
+        });
+        window.input("X", cx);
+    })
+    .expect("visible error and retry");
+    cx.run_until_parked();
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        assert!(window.try_find("editor-error").is_none());
+        assert_eq!(editor.read(cx).snapshot().text().to_string(), "Xprotected");
+    })
+    .expect("successful retry clears the error");
+}
+
+#[gpui_kit::test]
+// Spec: docs/modules/selection.md#标记展开与折叠
+fn a_collapsed_thematic_rule_keeps_native_hit_geometry_and_reveals_its_source(
+    cx: &mut TestAppContext,
+) {
+    let (handle, editor) = open(cx, "---\n\nend");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("secondary-end", cx);
+        window.render_frame(cx);
+        let first = &editor.read(cx).leaves[0];
+        assert!(first.rule);
+        assert!(first.text.is_empty());
+        assert!(editor.read(cx).geometry.borrow().contains_key(&first.key));
+        window.press("secondary-home", cx);
+        window.render_frame(cx);
+        assert!(!editor.read(cx).leaves[0].rule);
+        assert_eq!(editor.read(cx).leaves[0].text, "---");
+        assert_eq!(editor.read(cx).snapshot().revision().value(), 0);
+    })
+    .expect("rule projection and navigation");
+}
+
+#[gpui_kit::test]
 // Spec: docs/contracts/history.md#撤销单元
 fn native_undo_and_redo_share_document_history(cx: &mut TestAppContext) {
     let (handle, editor) = open(cx, "");
@@ -183,6 +345,124 @@ fn preedit_cancel_is_revision_free_and_commit_is_one_transaction(cx: &mut TestAp
         assert_eq!(editor.read(cx).snapshot().text().to_string(), "中文😀abc");
         assert_eq!(editor.read(cx).snapshot().revision().value(), 1);
     });
+}
+
+#[gpui_kit::test]
+// Spec: docs/acceptance/m2.md#windows-原生输入
+fn preedit_preserves_other_blocks_their_geometry_and_virtualization(cx: &mut TestAppContext) {
+    let (handle, editor) = open(cx, "# Title\n\nFirst paragraph\n\nLast paragraph");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        editor.update(cx, |editor, cx| {
+            editor.select_source(
+                super::selection(
+                    moino_text::ScalarOffset::new(12),
+                    moino_text::ScalarOffset::new(12),
+                ),
+                window,
+                cx,
+            );
+        });
+        window.render_frame(cx);
+        let first_key = editor.read(cx).leaves[0].key;
+        let last_key = editor.read(cx).leaves[4].key;
+        let before = editor.read(cx).geometry.borrow()[&first_key].bounds();
+        let bounds = window.find("document-editor").bounds();
+        {
+            let mut input =
+                TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window);
+            input.compose_text(None, "に😀", Some(3..3), cx);
+        }
+        window.render_frame(cx);
+        let state = editor.read(cx);
+        assert_eq!(state.leaves.len(), 5);
+        assert_eq!(state.leaves[0].key, first_key);
+        assert_eq!(state.leaves[4].key, last_key);
+        assert_eq!(state.leaves[0].text, "Title");
+        assert_eq!(state.leaves[2].text, "Firに😀st paragraph");
+        assert_eq!(state.leaves[4].text, "Last paragraph");
+        assert_eq!(state.geometry.borrow()[&first_key].bounds(), before);
+        assert_eq!(state.leaves[4].source(0).value(), 28);
+        assert_eq!(state.snapshot().revision().value(), 0);
+        {
+            let mut input =
+                TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window);
+            input.compose_text(None, "", None, cx);
+        }
+        window.render_frame(cx);
+        assert_eq!(editor.read(cx).leaves[2].text, "First paragraph");
+        assert_eq!(editor.read(cx).leaves[4].source(0).value(), 26);
+        assert!(!editor.read(cx).document.has_undo());
+    })
+    .expect("preedit block geometry");
+}
+
+#[gpui_kit::test]
+// Spec: docs/modules/selection.md#多击与拖选
+fn pointer_clicks_preserve_one_directional_selection(cx: &mut TestAppContext) {
+    use gpui_kit::test::ClickOptions;
+    use gpui_kit::{Modifiers, point, px};
+    let (handle, editor) = open(cx, "hello world\n\nnext block");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let click = |window: &mut gpui_kit::Window,
+                     cx: &mut gpui_kit::App,
+                     at: usize,
+                     modifiers: Modifiers,
+                     count| {
+            let position = {
+                let state = editor.read(cx);
+                let leaf = &state.leaves[0];
+                let geometry = &state.geometry.borrow()[&leaf.key];
+                geometry.position_for_index(at) + point(px(0.), geometry.caret_height() / 2.)
+            };
+            let bounds = window.find("document-editor").bounds();
+            window.click_with_options(
+                "document-editor",
+                ClickOptions::new()
+                    .with_offset(position - bounds.origin)
+                    .with_modifiers(modifiers)
+                    .with_count(count),
+                cx,
+            );
+        };
+        click(window, cx, 2, Modifiers::default(), 1);
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 2);
+        click(
+            window,
+            cx,
+            8,
+            Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            1,
+        );
+        assert_eq!(editor.read(cx).selection().anchor().offset.value(), 2);
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 8);
+        click(
+            window,
+            cx,
+            1,
+            Modifiers {
+                control: true,
+                ..Default::default()
+            },
+            1,
+        );
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 1);
+        assert!(editor.read(cx).selection().is_collapsed());
+        click(window, cx, 8, Modifiers::default(), 2);
+        assert_eq!(editor.read(cx).selection().range().start.value(), 6);
+        assert_eq!(editor.read(cx).selection().range().end.value(), 11);
+        click(window, cx, 8, Modifiers::default(), 3);
+        assert_eq!(
+            editor.read(cx).selection().range(),
+            editor.read(cx).leaves[0].raw
+        );
+        assert_eq!(editor.read(cx).snapshot().revision().value(), 0);
+    })
+    .expect("native pointer events");
 }
 
 #[gpui_kit::test]
@@ -329,4 +609,57 @@ fn long_documents_only_layout_visible_leaves_and_reveal_remote_cursors(cx: &mut 
         assert!(editor.geometry.borrow().len() < 100);
     })
     .expect("theme and width retain scroll anchor");
+    for _ in 0..3 {
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+        })
+        .expect("settle reflow");
+    }
+    let text_anchor = cx
+        .update_window(handle, |_, _, cx| {
+            let editor = editor.read(cx);
+            let top = editor.list.logical_scroll_top();
+            let leaf = &editor.leaves[top.item_ix];
+            let geometry = &editor.geometry.borrow()[&leaf.key];
+            let byte = geometry.index_for_position(gpui_kit::point(
+                geometry.bounds().left(),
+                editor.list.viewport_bounds().top(),
+            ));
+            (
+                leaf.key,
+                leaf.source(byte),
+                geometry.position_for_index(byte).y - editor.list.viewport_bounds().top(),
+            )
+        })
+        .expect("observe semantic scroll anchor");
+    cx.update(|cx| {
+        gpui_kit::component::Theme::update(cx, |theme| theme.font_size = gpui_kit::px(18.))
+    });
+    for _ in 0..3 {
+        cx.update_window(handle, |_, window, cx| {
+            window.simulate_next_frame(cx);
+            window.render_frame(cx);
+        })
+        .expect("settle font scale");
+    }
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let editor = editor.read(cx);
+        let top = editor.list.logical_scroll_top();
+        assert_eq!(editor.leaves[top.item_ix].key, anchor.0);
+        let leaf = editor
+            .leaves
+            .iter()
+            .find(|leaf| leaf.key == text_anchor.0)
+            .expect("anchored leaf");
+        let geometry = &editor.geometry.borrow()[&leaf.key];
+        let y = geometry
+            .position_for_index(leaf.byte(text_anchor.1, moino_document::Affinity::After))
+            .y
+            - editor.list.viewport_bounds().top();
+        assert!((y - text_anchor.2).abs() <= gpui_kit::px(1.));
+        assert!(editor.geometry.borrow().len() < 100);
+    })
+    .expect("font scale retains scroll anchor");
 }

@@ -13,5 +13,10 @@ status.characters: 字符
 status.unsaved: 未保存
 status.spelling: 拼写检查尚不可用
 editor.failed: 无法应用编辑
+editor.protected: 文档校验失败，已停止写入。仍可选择并复制正文。
+editor.unavailable: 当前文档不可编辑。仍可选择并复制正文。
+editor.stale: 编辑状态已变化，原文已保留，请重试此命令。
+editor.invalid: 编辑区间或选择无效，已拒绝修改并保留原文。
+editor.exhausted: 文档修订号已达到上限。仍可复制正文。
 theme.paper: 宣纸
 theme.inkstone: 墨池

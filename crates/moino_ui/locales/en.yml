@@ -13,5 +13,10 @@ status.characters: Characters
 status.unsaved: Unsaved
 status.spelling: Spelling unavailable
 editor.failed: Could not apply the edit
+editor.protected: Document validation failed. Editing has stopped; you can still copy the text.
+editor.unavailable: This document cannot be edited. You can still select and copy text.
+editor.stale: The editing state changed. Your text is preserved; retry the command.
+editor.invalid: The edit was rejected because its range or selection is invalid. Your text is preserved.
+editor.exhausted: The document revision limit has been reached. You can still copy the text.
 theme.paper: Paper
 theme.inkstone: Inkstone

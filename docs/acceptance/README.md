@@ -27,12 +27,15 @@ YAML 根为列表，示例直接看[段落 Enter 数据](vectors/edit-basic.yaml
 
 ## 正式数据
 
+`preview-basic.yaml` 通过正式 GPUI 窗口按顺序派发 `action` 中以逗号分隔的按键，初始插入点为文档起点。`expected` 为按文档顺序以 LF 连接各投影叶块后的显示文本；同时断言权威文本、修订、脏状态及历史未改变。样式与坐标由对应 GPUI 回归单独验证，显示文本相同不能替代几何或样式断言。
+
 | 文件 | 范围 |
 |---|---|
 | [edit-basic.yaml](vectors/edit-basic.yaml) | Enter、Backspace、粗体、选区替换、块转换 |
 | [edit-structural.yaml](vectors/edit-structural.yaml) | 段落分隔、配对升级、整段格式、列表编号与组合提交 |
 | [md-basic.yaml](vectors/md-basic.yaml) | 块、内联、表格、扩展与残缺语法 |
 | [sel-basic.yaml](vectors/sel-basic.yaml) | 选择方向与位置映射 |
+| [preview-basic.yaml](vectors/preview-basic.yaml) | 标记展开、折叠、嵌套与正文投影 |
 | [hist-basic.yaml](vectors/hist-basic.yaml) | 撤销重做、合并与重做栈 |
 
 testkit 读取以上数据，核心集成测试执行文本产品断言。正常路径、错误、取消、超时、竞态和资源耗尽都须覆盖，实际缺口见[覆盖边界](scenarios.md#覆盖边界)；不能把关联名称或数据存在当作通过。

@@ -207,9 +207,17 @@ impl Render for EditorWorkspace {
             .on_action(cx.listener(Self::toggle_menu))
             .on_action(cx.listener(Self::dismiss_menu))
             .on_action(cx.listener(|this, _: &Undo, window, cx| {
+                if this.is_source {
+                    this.source
+                        .update(cx, |source, cx| source.leave(window, cx));
+                }
                 this.editor.update(cx, |editor, cx| editor.undo(window, cx))
             }))
             .on_action(cx.listener(|this, _: &Redo, window, cx| {
+                if this.is_source {
+                    this.source
+                        .update(cx, |source, cx| source.leave(window, cx));
+                }
                 this.editor.update(cx, |editor, cx| editor.redo(window, cx))
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, _| {

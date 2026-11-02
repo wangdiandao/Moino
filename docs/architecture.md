@@ -36,7 +36,7 @@
 
 只通过 `gpui-kit` 门面及其再导出使用 GPUI，不直接依赖 `gpui-pre`。使用默认上游后端，启用 `component` 与 `syntect`，关闭 `assets` 和 `gpui-fast`；精确版本见[依赖基线](architecture.md#依赖基线)，升级与上游补丁见[开发流程](development.md#依赖与上游)。
 
-`gpui-base 0.8.1` 的文本运行前景色与反向选择恢复接缝使用固定提交的临时补丁，使展开标记保持普通文本与叶坐标，源码表面保留选择方向；[前景色修复](https://github.com/longbridge/gpui-kit/pull/3754)、[选择修复](https://github.com/longbridge/gpui-kit/pull/3756)和[移除条件](https://github.com/wangdiandao/Moino/issues/17)跟踪该例外。颜色值仍由 Moino 主题提供，补丁不引入产品色值。
+`gpui-base 0.8.1` 的文本运行前景色、相对字号与基线偏移、任务框颜色、反向选择恢复接缝使用固定提交的临时补丁，使展开标记与上下标保持普通文本和叶坐标，任务框独立于链接配色，源码表面保留选择方向；[前景色修复](https://github.com/longbridge/gpui-kit/pull/3754)、[行内排版接缝](https://github.com/longbridge/gpui-kit/issues/3762)、[任务框配色接缝](https://github.com/longbridge/gpui-kit/issues/3763)、[选择修复](https://github.com/longbridge/gpui-kit/pull/3756)和[移除条件](https://github.com/wangdiandao/Moino/issues/17)跟踪该例外。颜色与排版值仍由 Moino 主题提供，补丁不引入产品样式。
 
 标准界面优先复用 Kit 的 `Root`、`TitleBar`、`AppMenuBar`、`NativeMenu`、`PopupMenu`、`Sidebar`、`Tree`、`VirtualList`、`Popover`、`Tooltip`、`Notification`、`Dialog`、`Resizable`、`Scrollbar`、`Form`、`Settings`、`Input`、`Select`、`Switch`、`Kbd`、`Diff`、`Editor`、`TextView`。只有缺少行为或不能表达规定几何时才在 `moino_ui` 自建，并在 PR 说明理由。产品任何位置都不嵌入网页引擎。
 
@@ -59,6 +59,8 @@ IPC 同步原型以非阻塞监听接受连接，再显式将已接受流设为�
 主线程负责输入、事务提交、布局和绘制，不做阻塞 I/O、全文解析、搜索、数学图表布局、导出、哈希与解码。单批派生工作连续占用不得超过 8 ms，超出时在事务边界让出。
 
 文档核心的 `Transaction::prepare` 与 `HistoryRequest::prepare` 在离线快照上完成文本应用、解析和不变量检查；界面经后台执行器调用，再在前台以 `commit_prepared` 或 `apply_history` 校验身份并发布。同步 `commit`、`undo`、`redo` 是无界面便捷入口；全文失效或较重历史重放不能从界面线程调用这些入口。
+
+输入、选择、复制剪切、全选、历史与模式屏障按事件顺序进入同一编辑队列，依赖正文或选择的命令在执行时读取前序操作的结果。源码表面使用 Kit `InputEdit` 提供的实际编辑区间；组合更新合成为同一替换窗口，不用相同文本的公共前后缀推断发生修改的位置。连续源码输入遵循同一历史分组，粘贴、组合、选择变化与表面切换切断合并。
 
 异步工作携带所有者、身份、取消令牌与期限，提交前重新校验文档、世代、修订及适用的主题版本。期限只在前台且事件循环可运行时有效；阻塞、休眠或调度延迟不能被当作计时参数变化，恢复后先校验身份。L0 只经 `moino_jobs` 的时钟与调度抽象使用时间，不直接调用系统时钟或 sleep；上层适配 GPUI 执行器，完整任务状态见[预留范围](planned.md#jobs)。
 
