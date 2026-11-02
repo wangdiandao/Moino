@@ -24,7 +24,7 @@ impl CompiledPdf {
     pub fn pages(&self) -> usize {
         self.pages
     }
-    /// Warnings, including missing glyphs and unresolved fonts.
+    /// Nonfatal compiler diagnostics.
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
@@ -52,13 +52,24 @@ fn compile_world(world: world::PrototypeWorld) -> Result<CompiledPdf, ExportErro
                 .join("; "),
         )
     })?;
-    if let Some(family) = document
+    if let Some((info, character)) = document
         .pages()
         .iter()
         .find_map(|page| unavailable_font(&page.frame))
     {
+        use typst::World;
+        let candidate = world
+            .book()
+            .select_fallback(Some(info), info.variant, &character.to_string())
+            .map(|index| {
+                let candidate = world.book().info(index).expect("selected font metadata");
+                let loadable = world.font(index).is_some();
+                format!("{} (loadable {loadable})", candidate.family)
+            });
         return Err(ExportError(format!(
-            "font unavailable: missing visible glyph or placeholder font in {family}"
+            "font unavailable: U+{:04X} in {}; fallback {candidate:?}",
+            u32::from(character),
+            info.family,
         )));
     }
     let bytes = typst_pdf::pdf(
@@ -76,18 +87,20 @@ fn compile_world(world: world::PrototypeWorld) -> Result<CompiledPdf, ExportErro
     })
 }
 
-fn unavailable_font(frame: &typst::layout::Frame) -> Option<&str> {
+fn unavailable_font(frame: &typst::layout::Frame) -> Option<(&typst::text::FontInfo, char)> {
     use typst::{layout::FrameItem, text::is_default_ignorable};
     frame.items().find_map(|(_, item)| match item {
         FrameItem::Group(group) => unavailable_font(&group.frame),
-        FrameItem::Text(text) => (text.font.info().is_last_resort()
-            || text.glyphs.iter().any(|glyph| {
-                glyph.id == 0
-                    && text.text[glyph.range()].chars().any(|character| {
-                        !character.is_whitespace() && !is_default_ignorable(character)
+        FrameItem::Text(text) => text.glyphs.iter().find_map(|glyph| {
+            (glyph.id == 0 || text.font.info().is_last_resort())
+                .then(|| {
+                    text.text[glyph.range()].chars().find(|character| {
+                        !character.is_whitespace() && !is_default_ignorable(*character)
                     })
-            }))
-        .then_some(text.font.info().family.as_str()),
+                })
+                .flatten()
+                .map(|character| (text.font.info(), character))
+        }),
         _ => None,
     })
 }
