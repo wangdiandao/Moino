@@ -137,3 +137,10 @@
     █
     ```
   description: 行首第三个反引号建立围栏并把光标放在源码行
+- name: fence-converts-with-pairing-disabled
+  specs: [../../modules/editing.md#交互语法转换]
+  scenario: input-history
+  input: '``█'
+  action: 'insert:"`"'
+  expected: "```\n█\n```"
+  description: 关闭自动配对不禁止行首第三个反引号的独立围栏转换。

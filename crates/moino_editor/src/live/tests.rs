@@ -144,6 +144,204 @@ fn open(cx: &mut TestAppContext, text: &'static str) -> (AnyWindowHandle, Entity
 }
 
 #[gpui_kit::test]
+// Spec: docs/modules/editing.md#交互语法转换
+fn typing_hashes_waits_for_a_separator_before_showing_heading_state(cx: &mut TestAppContext) {
+    use gpui_kit::base::text::editor_host::BlockNode;
+    let (handle, editor) = open(cx, "");
+    for hashes in ["#", "##"] {
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.input("#", cx);
+        })
+        .expect("type a hash");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let state = editor.read(cx);
+            assert_eq!(state.leaves[0].text, hashes);
+            assert!(state.leaves[0].heading_badge.is_none());
+            assert!(matches!(state.leaves[0].block, BlockNode::Paragraph(_)));
+            assert_eq!(state.snapshot().text().to_string(), hashes);
+        })
+        .expect("pending prefix stays ordinary text");
+    }
+    cx.update_window(handle, |_, window, cx| window.input(" ", cx))
+        .expect("type separator");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(editor.read(cx).leaves[0].heading_badge, Some(2));
+        assert_eq!(editor.read(cx).snapshot().text().to_string(), "## ");
+    });
+}
+
+#[gpui_kit::test]
+// Spec: docs/modules/selection.md#标记展开与折叠
+fn heading_reentry_restores_markers_body_geometry_and_folding_without_history(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::base::text::editor_host::BlockNode;
+    use gpui_kit::test::ClickOptions;
+    use gpui_kit::{point, px};
+    for source in [
+        "# Title\n\nbody",
+        "## Title\n\nbody",
+        "### Title\n\nbody",
+        "#### Title\n\nbody",
+        "##### Title\n\nbody",
+        "###### Title\n\nbody",
+    ] {
+        let level =
+            u8::try_from(source.chars().take_while(|ch| *ch == '#').count()).expect("level");
+        let (handle, editor) = open(cx, source);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("secondary-end", cx);
+        })
+        .expect("leave heading");
+        cx.run_until_parked();
+        let folded_height = cx
+            .update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let state = editor.read(cx);
+                let heading = &state.leaves[0];
+                assert_eq!(heading.text, "Title");
+                assert!(matches!(heading.block, BlockNode::Heading { .. }));
+                assert!(heading.heading_badge.is_none());
+                state.geometry.borrow()[&heading.key].caret_height()
+            })
+            .expect("measure folded heading");
+        for pointer in [false, true] {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                if pointer {
+                    let position = {
+                        let state = editor.read(cx);
+                        let geometry = &state.geometry.borrow()[&state.leaves[0].key];
+                        geometry.position_for_index(2) + point(px(0.), geometry.caret_height() / 2.)
+                    };
+                    let bounds = window.find("document-editor").bounds();
+                    window.click_with_options(
+                        "document-editor",
+                        ClickOptions::new().with_offset(position - bounds.origin),
+                        cx,
+                    );
+                } else {
+                    window.press("secondary-home", cx);
+                }
+            })
+            .expect("reenter heading with pointer or keyboard");
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let state = editor.read(cx);
+                let heading = &state.leaves[0];
+                assert_eq!(heading.text, source.lines().next().expect("heading line"));
+                assert_eq!(heading.heading_badge, Some(level));
+                assert!(matches!(heading.block, BlockNode::Paragraph(_)));
+                let geometry = state.geometry.borrow();
+                let body = state.leaves.last().expect("body");
+                assert!(
+                    (geometry[&heading.key].caret_height() - geometry[&body.key].caret_height())
+                        .abs()
+                        <= px(0.5)
+                );
+                assert_eq!(state.snapshot().revision().value(), 0);
+                assert!(!state.is_dirty() && !state.document.has_undo());
+            })
+            .expect("markers and body geometry on reentry");
+            cx.update_window(handle, |_, window, cx| window.press("secondary-end", cx))
+                .expect("leave again");
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                let state = editor.read(cx);
+                assert_eq!(state.leaves[0].text, "Title");
+                assert!(
+                    (state.geometry.borrow()[&state.leaves[0].key].caret_height() - folded_height)
+                        .abs()
+                        <= px(0.5)
+                );
+                assert_eq!(state.snapshot().text().to_string(), source);
+            })
+            .expect("restore exact heading geometry");
+        }
+    }
+}
+
+#[gpui_kit::test]
+// Spec: docs/modules/selection.md#多击与拖选
+fn stationary_pointer_reentry_preserves_the_original_hit_across_reflow(cx: &mut TestAppContext) {
+    use gpui_kit::test::TestEventExt;
+    use gpui_kit::{MouseButton, point, px};
+    for source in [
+        "# Heading\n\nBody",
+        "## Heading\n\nBody",
+        "### Heading\n\nBody",
+        "#### Heading\n\nBody",
+        "##### Heading\n\nBody",
+        "###### Heading\n\nBody",
+        "**bold** tail\n\nBody",
+        "[title](target) tail\n\nBody",
+    ] {
+        for enter_first in [true, false] {
+            let (handle, editor) = open(cx, source);
+            if enter_first {
+                cx.update_window(handle, |_, window, cx| {
+                    window.press("secondary-end", cx);
+                })
+                .expect("fold syntax before pointer entry");
+                cx.run_until_parked();
+            }
+            let (position, expected) = cx
+                .update_window(handle, |_, window, cx| {
+                    window.render_frame(cx);
+                    let position = {
+                        let state = editor.read(cx);
+                        let leaf = if enter_first {
+                            &state.leaves[0]
+                        } else {
+                            state.leaves.last().expect("body leaf")
+                        };
+                        let geometry = &state.geometry.borrow()[&leaf.key];
+                        geometry.position_for_index(3) + point(px(0.), geometry.caret_height() / 2.)
+                    };
+                    let expected = editor.read(cx).hit(position).expect("folded text hit");
+                    window.pointer_down(position, MouseButton::Left, cx);
+                    (position, expected)
+                })
+                .expect("press on folded syntax");
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.pointer_move(position, Some(MouseButton::Left), cx);
+                window.pointer_up(position, MouseButton::Left, cx);
+                let state = editor.read(cx);
+                assert_eq!(
+                    state.selection(),
+                    moino_document::Selection::cursor(expected),
+                    "{source}"
+                );
+                assert_eq!(state.snapshot().revision().value(), 0);
+                assert!(!state.document.has_undo());
+                window.input("X", cx);
+            })
+            .expect("stationary movement after the new layout");
+            cx.run_until_parked();
+            cx.update_window(handle, |_, _, cx| {
+                let mut text = moino_text::TextBuffer::new(source);
+                text.replace(expected..expected, "X")
+                    .expect("expected insertion");
+                assert_eq!(
+                    editor.read(cx).snapshot().text().to_string(),
+                    text.to_string()
+                );
+            })
+            .expect("typing inserts without replacing existing letters");
+        }
+    }
+}
+
+#[gpui_kit::test]
 // Spec: docs/modules/editing.md#输入路由
 fn queued_native_typing_and_block_commands_preserve_order(cx: &mut TestAppContext) {
     let (handle, editor) = open(cx, "");
@@ -400,8 +598,8 @@ fn preedit_preserves_other_blocks_their_geometry_and_virtualization(cx: &mut Tes
 #[gpui_kit::test]
 // Spec: docs/modules/selection.md#多击与拖选
 fn pointer_clicks_preserve_one_directional_selection(cx: &mut TestAppContext) {
-    use gpui_kit::test::ClickOptions;
-    use gpui_kit::{Modifiers, point, px};
+    use gpui_kit::test::{ClickOptions, TestEventExt};
+    use gpui_kit::{Modifiers, MouseButton, point, px};
     let (handle, editor) = open(cx, "hello world\n\nnext block");
     cx.update_window(handle, |_, window, cx| {
         window.render_frame(cx);
@@ -461,6 +659,22 @@ fn pointer_clicks_preserve_one_directional_selection(cx: &mut TestAppContext) {
             editor.read(cx).leaves[0].raw
         );
         assert_eq!(editor.read(cx).snapshot().revision().value(), 0);
+        let (start, end) = {
+            let state = editor.read(cx);
+            let geometry = state.geometry.borrow();
+            let first = &geometry[&state.leaves[0].key];
+            let last = &geometry[&state.leaves.last().expect("last leaf").key];
+            (
+                first.position_for_index(0) + point(px(0.), first.caret_height() / 2.),
+                last.position_for_index(4) + point(px(0.), last.caret_height() / 2.),
+            )
+        };
+        window.pointer_down(start, MouseButton::Left, cx);
+        window.pointer_move(end, Some(MouseButton::Left), cx);
+        window.pointer_up(end, MouseButton::Left, cx);
+        assert_eq!(editor.read(cx).selection().anchor().offset.value(), 0);
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 17);
+        assert!(!editor.read(cx).document.has_undo());
     })
     .expect("native pointer events");
 }

@@ -117,16 +117,23 @@ impl EntityInputHandler for LiveEditor {
         let normalized = moino_text::normalize_newlines(text);
         let len = normalized.encode_utf16().count();
         let preedit = TextBuffer::new(&normalized);
-        let selected = selected
-            .filter(|value| {
-                value.start <= value.end
-                    && value.end <= len
-                    && preedit
-                        .utf16_to_scalar(Utf16Offset::new(value.start))
-                        .is_ok()
-                    && preedit.utf16_to_scalar(Utf16Offset::new(value.end)).is_ok()
-            })
-            .unwrap_or(len..len);
+        let selected = if let Some(selected) = selected {
+            if selected.start > selected.end {
+                return;
+            }
+            let position = |offset| {
+                crate::source::normalized_position(text, Utf16Offset::new(offset))
+                    .and_then(|at| preedit.to_utf16(at).ok())
+                    .map(Utf16Offset::value)
+            };
+            let (Some(start), Some(end)) = (position(selected.start), position(selected.end))
+            else {
+                return;
+            };
+            start..end
+        } else {
+            len..len
+        };
         self.composition = Some(Composition {
             range,
             text: normalized,
@@ -181,3 +188,6 @@ impl EntityInputHandler for LiveEditor {
         Some(text.to_utf16(text.len()).ok()?.value())
     }
 }
+
+#[cfg(test)]
+mod tests;

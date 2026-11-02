@@ -83,6 +83,7 @@
 | [JetBrains Mono 2.304](https://github.com/JetBrains/JetBrainsMono/tree/v2.304)（未修改的 Regular、Italic、Bold、BoldItalic TTF） | 代码字体 | [SIL OFL 1.1](../assets/fonts/jetbrains-mono-ofl.txt) |
 | KaTeX 字体（随 RaTeX 提供） | 数学字体 | SIL OFL 1.1 |
 | Libertinus Serif（取自固定 `typst-assets 0.15.1`，未修改） | M0 PDF 固定样本字体；不替代产品字体选择 | [SIL OFL 1.1](../assets/fonts/libertinus-ofl.txt) |
+| [Noto Sans CJK SC](https://github.com/notofonts/noto-cjk/tree/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese) | CI 的 PDF 中日韩字体前置；Windows／macOS 下载固定文件并校验 SHA-256，Linux 使用 `fonts-noto-cjk`；不随产品分发 | [SIL OFL 1.1](https://github.com/notofonts/noto-cjk/blob/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/LICENSE) |
 | CommonMark 0.31.2 官方示例 | 仅开发用一致性输入与预期，不随产品分发 | [CC BY-SA 4.0 与来源声明](../crates/moino_markdown/tests/fixtures/README.md) |
 | Hunspell `en_US` 词典（基于 SCOWL） | 随包拼写词典 | 以随包附带的许可证文本为准，打包前逐项核对 |
 

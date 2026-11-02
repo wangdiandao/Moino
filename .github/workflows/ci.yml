@@ -31,6 +31,23 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang libfontconfig-dev libwayland-dev libxkbcommon-x11-dev libx11-xcb-dev libssl-dev libzstd-dev libasound2-dev vulkan-validationlayers libvulkan1 libxcb-shape0-dev libxcb-xfixes0-dev fonts-noto-cjk
+      - name: CJK font fixture for Windows and macOS
+        if: runner.os != 'Linux'
+        shell: pwsh
+        run: |
+          $fixturePath = Join-Path $env:RUNNER_TEMP 'NotoSansCJKsc-Regular.otf'
+          Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf' -OutFile $fixturePath
+          if ((Get-FileHash -LiteralPath $fixturePath -Algorithm SHA256).Hash -ne '2C76254F6FC379FDDFCE0A7E84FB5385BB135D3E399294F6EEB6680D0365B74B') {
+            throw 'CJK font fixture digest mismatch'
+          }
+          $fixtureDirectory = if ($env:RUNNER_OS -eq 'Windows') {
+            Join-Path $env:USERPROFILE 'AppData/Local/Microsoft/Windows/Fonts'
+          } else {
+            Join-Path $env:HOME 'Library/Fonts'
+          }
+          New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
+          Copy-Item -LiteralPath $fixturePath -Destination $fixtureDirectory
+          Get-Item -LiteralPath (Join-Path $fixtureDirectory 'NotoSansCJKsc-Regular.otf') | Select-Object FullName, Length
       - name: Toolchain
         shell: bash
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
@@ -56,8 +73,8 @@ jobs:
       - name: PDF and raster probes
         shell: bash
         run: |
-          cargo run -p moino_export --example m0 --locked
-          cargo run -p moino_preview --example m0 --locked
+          cargo run -p moino_export --example m0-pdf --locked
+          cargo run -p moino_preview --example m0-raster --locked
       - name: Evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -82,6 +99,10 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: CJK font fixtures
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y fonts-noto-cjk
       - run: rustup toolchain install 1.99.1 --profile minimal
       - run: rustup component add llvm-tools-preview
       - uses: Swatinem/rust-cache@2201cc584a476d1b508be977bbe4b7d1c7a52e9c # v2.9.3

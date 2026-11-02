@@ -53,6 +53,9 @@ pub fn render_pdf_page(bytes: Vec<u8>, page_index: usize) -> Result<Vec<u8>, Pre
 }
 
 #[cfg(test)]
+mod pdf_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     #[test]
@@ -63,7 +66,7 @@ mod tests {
     #[test]
     // Spec: docs/acceptance/m0.md#技术原型
     fn decodes_actual_typst_page_and_rejects_invalid_page_or_budget() {
-        let pdf = moino_export::compile_prototype("#set page(width: 100pt, height: 100pt, margin: 10pt)\nHello\n#rect(width: 20pt, height: 20pt, fill: red)").expect("fixture PDF");
+        let pdf = moino_export::compile_prototype("#set page(width: 100pt, height: 100pt, margin: 10pt)\nHello\n#rect(width: 20pt, height: 20pt, fill: red)\n#image(bytes((0, 255, 0)), format: (encoding: \"rgb8\", width: 1, height: 1), width: 20pt, height: 20pt)").expect("fixture PDF");
         let png = render_pdf_page(pdf.bytes().to_vec(), 0).expect("rasterized page");
         let image = image::load_from_memory(&png).expect("valid PNG").to_rgba8();
         assert_eq!(image.dimensions(), (100, 100));
@@ -71,6 +74,12 @@ mod tests {
             image
                 .pixels()
                 .any(|pixel| pixel.0[0] > 200 && pixel.0[1] < 100 && pixel.0[2] < 100)
+        );
+        assert!(
+            image
+                .pixels()
+                .any(|pixel| pixel.0[0] < 100 && pixel.0[1] > 200 && pixel.0[2] < 100),
+            "embedded raster image survives PDF decoding"
         );
         assert!(render_pdf_page(pdf.bytes().to_vec(), 1).is_err());
         let large =

@@ -10,6 +10,33 @@ fn meaningful(cst: &Cst) -> Vec<&Node> {
         .filter(|node| node.syntax() != &Syntax::Trivia)
         .collect()
 }
+
+#[test]
+// Spec: docs/contracts/markdown-dialect.md#cst-与标记区间
+fn task_prefixes_belong_to_the_item_when_paragraph_ranges_start_after_the_marker() {
+    for source in [
+        "- [x] 中😀\n\n\n  tail",
+        "- [x] 中😀\n  =",
+        "> - [ ] 中😀\n>\n>   tail",
+    ] {
+        let text = TextBuffer::new(source);
+        let cst = Cst::parse(&text);
+        assert!(cst.is_valid(), "{source}: {:#?}", cst.nodes());
+        assert_eq!(cst.serialize(), source);
+        let mut pending: Vec<_> = cst.nodes().iter().collect();
+        let mut tasks = 0;
+        while let Some(node) = pending.pop() {
+            for child in node.children() {
+                if matches!(child.syntax(), Syntax::Task(_)) {
+                    assert_eq!(node.syntax(), &Syntax::Item);
+                    tasks += 1;
+                }
+                pending.push(child);
+            }
+        }
+        assert_eq!(tasks, 1);
+    }
+}
 fn validate(nodes: &[Node], parent: std::ops::Range<ScalarOffset>, ids: &mut HashSet<u64>) {
     for node in nodes {
         let raw = node.raw();
