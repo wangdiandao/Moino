@@ -3,7 +3,7 @@ use typst::{
     diag::{FileError, FileResult},
     foundations::{Bytes, Datetime},
     syntax::{FileId, Source},
-    text::Font,
+    text::{Font, FontFamily, FontList, TextElem},
     utils::LazyHash,
 };
 use typst_kit::fonts::{FontStore, system};
@@ -40,8 +40,18 @@ impl PrototypeWorld {
         if include_system {
             fonts.extend(system().filter(|(_, info)| !info.is_last_resort()));
         }
+        let mut library = Library::default();
+        if fonts.book().contains_family("noto sans cjk sc") {
+            library.styles.set(
+                TextElem::font,
+                FontList(vec![
+                    FontFamily::new("Libertinus Serif"),
+                    FontFamily::new("Noto Sans CJK SC"),
+                ]),
+            );
+        }
         Self {
-            library: LazyHash::new(Library::default()),
+            library: LazyHash::new(library),
             source: Source::detached(text),
             fonts,
         }
