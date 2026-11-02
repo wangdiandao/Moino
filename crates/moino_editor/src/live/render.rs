@@ -209,6 +209,7 @@ impl Render for LiveEditor {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| {
+                    this.drag_position = None;
                     this.focus.focus(window, cx);
                     if let Some(at) = this.hit(event.position) {
                         if event.click_count >= 3 {
@@ -240,15 +241,23 @@ impl Render for LiveEditor {
                             at
                         };
                         this.select(selection(anchor, at), window, cx);
-                        this.dragging = true;
+                        this.drag_position = Some(event.position);
                     }
                 }),
             )
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
-                if this.dragging
-                    && event.pressed_button == Some(MouseButton::Left)
-                    && let Some(at) = this.hit(event.position)
-                {
+                let Some(previous) = this.drag_position else {
+                    return;
+                };
+                if event.pressed_button != Some(MouseButton::Left) {
+                    this.drag_position = None;
+                    return;
+                }
+                if event.position == previous {
+                    return;
+                }
+                this.drag_position = Some(event.position);
+                if let Some(at) = this.hit(event.position) {
                     this.select(
                         selection(this.document.selection().anchor().offset, at),
                         window,
@@ -258,7 +267,7 @@ impl Render for LiveEditor {
             }))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, _, _| this.dragging = false),
+                cx.listener(|this, _, _, _| this.drag_position = None),
             )
             .size_full()
             .relative()
