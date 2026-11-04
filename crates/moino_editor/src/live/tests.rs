@@ -145,6 +145,156 @@ fn open(cx: &mut TestAppContext, text: &'static str) -> (AnyWindowHandle, Entity
 
 #[gpui_kit::test]
 // Spec: docs/modules/selection.md#标记展开与折叠
+fn heading_navigation_and_typing_use_content_boundaries_even_after_source_selection(
+    cx: &mut TestAppContext,
+) {
+    for (source, start, end, expected) in [
+        ("## 中😀 ##", 3, 5, "## X中😀 ##"),
+        ("中😀\n===", 0, 2, "X中😀\n==="),
+        ("## ", 2, 3, "##X "),
+    ] {
+        let (handle, editor) = open(cx, source);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("secondary-home", cx);
+            assert_eq!(editor.read(cx).selection().head().offset.value(), start);
+            window.press("left", cx);
+            assert_eq!(editor.read(cx).selection().head().offset.value(), start);
+            window.press("secondary-end", cx);
+            assert_eq!(editor.read(cx).selection().head().offset.value(), end);
+            window.press("right", cx);
+            assert_eq!(editor.read(cx).selection().head().offset.value(), end);
+            editor.update(cx, |editor, cx| {
+                editor.select_source(
+                    moino_document::Selection::cursor(moino_text::ScalarOffset::new(0)),
+                    window,
+                    cx,
+                );
+            });
+            window.input("X", cx);
+        })
+        .expect("navigate hidden heading markers and insert");
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(editor.read(cx).snapshot().text().to_string(), expected));
+        cx.update_window(handle, |_, window, cx| window.press("secondary-z", cx))
+            .expect("undo insertion");
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(editor.read(cx).snapshot().text().to_string(), source));
+    }
+}
+
+#[gpui_kit::test]
+// Spec: docs/modules/editing.md#输入法组合
+fn composing_in_a_heading_preserves_title_style_and_commits_inside_its_hidden_prefix(
+    cx: &mut TestAppContext,
+) {
+    use gpui_kit::base::text::editor_host::BlockNode;
+    let (handle, editor) = open(cx, "## Title");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        let bounds = window.find("document-editor").bounds();
+        let mut input = TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window);
+        input.compose_text(None, "中😀", Some(3..3), cx);
+        assert_eq!(input.marked_text_range(cx), Some(3..6));
+        let state = editor.read(cx);
+        assert_eq!(state.leaves[0].text, "中😀Title");
+        assert!(matches!(
+            state.leaves[0].block,
+            BlockNode::Heading { level: 2, .. }
+        ));
+        assert_eq!(state.snapshot().revision().value(), 0);
+        input.commit_text("中😀", cx);
+    })
+    .expect("compose in rendered heading");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(
+            editor.read(cx).snapshot().text().to_string(),
+            "## 中😀Title"
+        )
+    });
+}
+
+#[gpui_kit::test]
+// Spec: docs/modules/editing.md#输入法组合
+fn partial_preedit_updates_preserve_unreplaced_text_and_one_undo_unit(cx: &mut TestAppContext) {
+    let (handle, editor) = open(cx, "# original");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("secondary-a", cx);
+        let bounds = window.find("document-editor").bounds();
+        let mut input = TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window);
+        input.compose_text(None, "中😀", Some(3..3), cx);
+        input.compose_text(Some(1..3), "文", Some(1..1), cx);
+        assert_eq!(editor.read(cx).display_text().to_string(), "中文");
+        assert_eq!(input.marked_text_range(cx), Some(0..2));
+        assert_eq!(
+            input
+                .selected_text_range(cx)
+                .expect("native selection")
+                .range,
+            2..2
+        );
+        input.compose_text(Some(2..2), "末", Some(1..1), cx);
+        assert_eq!(editor.read(cx).display_text().to_string(), "中文末");
+        assert_eq!(editor.read(cx).snapshot().revision().value(), 0);
+        input.unmark_text(cx);
+    })
+    .expect("replace part of preedit");
+    cx.run_until_parked();
+    cx.update(|cx| {
+        assert_eq!(editor.read(cx).snapshot().text().to_string(), "中文末");
+        assert_eq!(editor.read(cx).snapshot().revision().value(), 1);
+    });
+    cx.update_window(handle, |_, window, cx| window.press("secondary-z", cx))
+        .expect("undo whole composition");
+    cx.run_until_parked();
+    cx.update(|cx| assert_eq!(editor.read(cx).snapshot().text().to_string(), "# original"));
+}
+
+#[gpui_kit::test]
+// Spec: docs/modules/selection.md#标记展开与折叠
+fn navigation_skips_container_markers_and_empty_containers_accept_native_input(
+    cx: &mut TestAppContext,
+) {
+    for (source, expected, start) in [
+        ("- item", "- Xitem", 2),
+        ("> text", "> Xtext", 2),
+        ("> ", "> X", 2),
+        ("- [ ] ", "- [ ] X", 6),
+    ] {
+        let (handle, editor) = open(cx, source);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.press("secondary-home", cx);
+            window.press("left", cx);
+            assert_eq!(
+                editor.read(cx).selection().head().offset.value(),
+                start,
+                "{source}"
+            );
+            window.input("X", cx);
+        })
+        .expect("edit a container's first content position");
+        cx.run_until_parked();
+        cx.update(|cx| assert_eq!(editor.read(cx).snapshot().text().to_string(), expected));
+    }
+    let (handle, editor) = open(cx, "> a\n> b");
+    cx.update_window(handle, |_, window, cx| {
+        window.render_frame(cx);
+        window.press("secondary-end", cx);
+        window.press("left", cx);
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 6);
+        window.press("left", cx);
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 3);
+        window.press("right", cx);
+        assert_eq!(editor.read(cx).selection().head().offset.value(), 6);
+    })
+    .expect("cross a hidden continuation prefix");
+}
+
+#[gpui_kit::test]
+// Spec: docs/modules/selection.md#标记展开与折叠
 fn a_separator_caret_and_empty_row_triple_click_do_not_reenter_the_previous_heading(
     cx: &mut TestAppContext,
 ) {
@@ -199,7 +349,7 @@ fn a_separator_caret_and_empty_row_triple_click_do_not_reenter_the_previous_head
 
 #[gpui_kit::test]
 // Spec: docs/modules/editing.md#交互语法转换
-fn typing_hashes_waits_for_a_separator_before_showing_heading_state(cx: &mut TestAppContext) {
+fn typing_heading_syntax_retains_a_candidate_until_a_block_boundary(cx: &mut TestAppContext) {
     use gpui_kit::base::text::editor_host::BlockNode;
     let (handle, editor) = open(cx, "");
     for hashes in ["#", "##"] {
@@ -223,14 +373,19 @@ fn typing_hashes_waits_for_a_separator_before_showing_heading_state(cx: &mut Tes
         .expect("type separator");
     cx.run_until_parked();
     cx.update(|cx| {
-        assert_eq!(editor.read(cx).leaves[0].heading_badge, Some(2));
+        assert_eq!(editor.read(cx).leaves[0].heading_badge, None);
+        assert_eq!(editor.read(cx).leaves[0].text, "## ");
+        assert!(matches!(
+            editor.read(cx).leaves[0].block,
+            BlockNode::Paragraph(_)
+        ));
         assert_eq!(editor.read(cx).snapshot().text().to_string(), "## ");
     });
 }
 
 #[gpui_kit::test]
 // Spec: docs/modules/selection.md#标记展开与折叠
-fn heading_reentry_restores_markers_body_geometry_and_folding_without_history(
+fn heading_reentry_preserves_title_geometry_and_hides_block_markers_without_history(
     cx: &mut TestAppContext,
 ) {
     use gpui_kit::base::text::editor_host::BlockNode;
@@ -285,24 +440,22 @@ fn heading_reentry_restores_markers_body_geometry_and_folding_without_history(
             })
             .expect("reenter heading with pointer or keyboard");
             cx.run_until_parked();
+            cx.executor()
+                .advance_clock(std::time::Duration::from_millis(10));
+            cx.run_until_parked();
             cx.update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
                 let state = editor.read(cx);
                 let heading = &state.leaves[0];
-                assert_eq!(heading.text, source.lines().next().expect("heading line"));
+                assert_eq!(heading.text, "Title");
                 assert_eq!(heading.heading_badge, Some(level));
-                assert!(matches!(heading.block, BlockNode::Paragraph(_)));
+                assert!(matches!(heading.block, BlockNode::Heading { .. }));
                 let geometry = state.geometry.borrow();
-                let body = state.leaves.last().expect("body");
-                assert!(
-                    (geometry[&heading.key].caret_height() - geometry[&body.key].caret_height())
-                        .abs()
-                        <= px(0.5)
-                );
+                assert!((geometry[&heading.key].caret_height() - folded_height).abs() <= px(0.5));
                 assert_eq!(state.snapshot().revision().value(), 0);
                 assert!(!state.is_dirty() && !state.document.has_undo());
             })
-            .expect("markers and body geometry on reentry");
+            .expect("stable title geometry on reentry");
             cx.update_window(handle, |_, window, cx| window.press("secondary-end", cx))
                 .expect("leave again");
             cx.run_until_parked();

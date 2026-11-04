@@ -1,8 +1,9 @@
+use crate::native_input::{NormalizedInput, native_range};
 use crate::{PrototypeEditor, byte_from_utf16};
 use gpui_kit::{
     Bounds, Context, EntityInputHandler, Pixels, Point, UTF16Selection, Window, px, size,
 };
-use moino_text::{TextBuffer, Utf16Offset};
+use moino_text::TextBuffer;
 use std::ops::Range;
 
 impl EntityInputHandler for PrototypeEditor {
@@ -13,6 +14,7 @@ impl EntityInputHandler for PrototypeEditor {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<String> {
+        native_range(&TextBuffer::new(&self.text), range.clone())?;
         let start = byte_from_utf16(&self.text, range.start)?;
         let end = byte_from_utf16(&self.text, range.end)?;
         *adjusted = Some(range);
@@ -30,11 +32,10 @@ impl EntityInputHandler for PrototypeEditor {
         })
     }
     fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
-        self.marked.clone()
+        self.composition.marked_range()
     }
     fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.marked = None;
-        self.original_composition = None;
+        self.finish_composition();
         self.changed(window, cx);
     }
     fn replace_text_in_range(
@@ -47,8 +48,7 @@ impl EntityInputHandler for PrototypeEditor {
         if self.edit(range, text).is_none() {
             return;
         }
-        self.marked = None;
-        self.original_composition = None;
+        self.finish_composition();
         self.changed(window, cx);
     }
     fn replace_and_mark_text_in_range(
@@ -60,49 +60,37 @@ impl EntityInputHandler for PrototypeEditor {
         cx: &mut Context<Self>,
     ) {
         if text.is_empty() {
-            if let Some((text, selection, reversed)) = self.original_composition.take() {
-                self.text = text;
-                self.selection = selection;
-                self.selection_reversed = reversed;
+            if let Some(original) = self.composition.cancel() {
+                self.text = original.text;
+                self.selection = original.selection.range;
+                self.selection_reversed = original.selection.reversed;
             }
-            self.marked = None;
         } else {
-            let preedit = TextBuffer::new(text);
-            let selection = if let Some(selection) = selection {
-                if selection.start > selection.end {
-                    return;
-                }
-                let position = |offset| {
-                    crate::source::normalized_position(text, Utf16Offset::new(offset))
-                        .and_then(|at| preedit.to_utf16(at).ok())
-                        .map(Utf16Offset::value)
-                };
-                let (Some(start), Some(end)) = (position(selection.start), position(selection.end))
-                else {
-                    return;
-                };
-                Some(start..end)
-            } else {
-                None
-            };
-            let original = self.original_composition.is_none().then(|| {
-                (
-                    self.text.clone(),
-                    self.selection.clone(),
-                    self.selection_reversed,
-                )
-            });
-            let Some(inserted) = self.edit(range, text) else {
+            let Some(input) = NormalizedInput::new(text, selection) else {
                 return;
             };
-            if original.is_some() {
-                self.original_composition = original;
+            let target = range
+                .or_else(|| self.composition.marked_range())
+                .unwrap_or_else(|| self.selection.clone());
+            if native_range(&TextBuffer::new(&self.text), target.clone()).is_none() {
+                return;
             }
+            if !self.composition.begin(
+                &self.text,
+                UTF16Selection {
+                    range: self.selection.clone(),
+                    reversed: self.selection_reversed,
+                },
+            ) {
+                return;
+            }
+            let inserted = self
+                .edit(Some(target), input.text())
+                .expect("validated preedit replacement");
             let start = inserted.start;
-            self.marked = Some(inserted);
-            if let Some(selection) = selection {
-                self.selection = start + selection.start..start + selection.end;
-            }
+            self.composition.update_marked(inserted);
+            let selection = input.selection();
+            self.selection = start + selection.start..start + selection.end;
         }
         self.changed(window, cx);
     }
@@ -113,6 +101,7 @@ impl EntityInputHandler for PrototypeEditor {
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
+        native_range(&TextBuffer::new(&self.text), range.clone())?;
         let geometry = self.geometry.borrow();
         let geometry = geometry.get(&1)?;
         let start = geometry.position_for_index(byte_from_utf16(&self.text, range.start)?);
@@ -147,6 +136,7 @@ impl EntityInputHandler for PrototypeEditor {
             && byte_from_utf16(&self.text, range.start).is_some()
             && byte_from_utf16(&self.text, range.end).is_some()
         {
+            self.finish_composition();
             self.selection = range;
             self.selection_reversed = false;
             self.changed(window, cx);
@@ -171,6 +161,139 @@ mod tests {
         assert_eq!(byte_from_utf16("中😀a", 3), Some(7));
         assert_eq!(byte_from_utf16("中😀a", 4), Some(8));
         assert_eq!(byte_from_utf16("中😀a", 5), None);
+    }
+
+    #[gpui_kit::test]
+    // Spec: docs/modules/editing.md#输入法组合
+    fn navigation_finishes_composition_before_editing_and_late_cancel_preserves_text(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::init(cx);
+        });
+        let (handle, editor) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                let editor = cx.new(PrototypeEditor::new);
+                window.focus(&editor.read(cx).focus_handle(), cx);
+                editor
+            })
+            .expect("prototype window")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            for (key, expected) in [("left", "aX中b"), ("right", "a中bX"), ("enter", "a中\nXb")]
+            {
+                editor.update(cx, |editor, cx| {
+                    let end = editor.text.encode_utf16().count();
+                    editor.replace_text_in_range(Some(0..end), "ab", window, cx);
+                });
+                window.render_frame(cx);
+                let bounds = window.find("live-editor").bounds();
+                TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window)
+                    .compose_text(Some(1..1), "中", Some(1..1), cx);
+                window.press(key, cx);
+                assert!(!editor.read(cx).composition.is_active());
+                window.input("X", cx);
+                assert_eq!(editor.read(cx).text(), expected);
+                TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window)
+                    .compose_text(None, "", None, cx);
+                assert_eq!(editor.read(cx).text(), expected, "late cancel after {key}");
+            }
+        })
+        .expect("composition navigation");
+    }
+
+    #[gpui_kit::test]
+    // Spec: docs/modules/selection.md#逻辑选择
+    fn native_probe_moves_and_deletes_extended_graphemes_and_collapses_selection(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::init(cx);
+        });
+        let (handle, editor) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                let editor = cx.new(PrototypeEditor::new);
+                window.focus(&editor.read(cx).focus_handle(), cx);
+                editor
+            })
+            .expect("prototype window")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            for cluster in ["e\u{301}", "👍🏽", "👨‍👩‍👧‍👦", "🇨🇳"] {
+                let value = format!("a{cluster}b");
+                let end = 1 + cluster.encode_utf16().count();
+                editor.update(cx, |editor, cx| {
+                    let old_end = editor.text.encode_utf16().count();
+                    editor.replace_text_in_range(Some(0..old_end), &value, window, cx);
+                    editor.set_selected_text_range(end..end, window, cx);
+                });
+                window.press("left", cx);
+                assert_eq!(editor.read(cx).selection, 1..1);
+                window.press("right", cx);
+                assert_eq!(editor.read(cx).selection, end..end);
+                window.press("backspace", cx);
+                assert_eq!(editor.read(cx).text(), "ab");
+                editor.update(cx, |editor, cx| {
+                    editor.set_selected_text_range(0..1, window, cx);
+                });
+                window.press("right", cx);
+                assert_eq!(editor.read(cx).selection, 1..1);
+                editor.update(cx, |editor, cx| {
+                    editor.set_selected_text_range(1..2, window, cx);
+                });
+                window.press("left", cx);
+                assert_eq!(editor.read(cx).selection, 1..1);
+            }
+        })
+        .expect("grapheme editing");
+    }
+
+    #[gpui_kit::test]
+    // Spec: docs/modules/editing.md#输入法组合
+    fn pointer_and_native_selection_finish_preedit_before_retargeting_input(
+        cx: &mut TestAppContext,
+    ) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            crate::init(cx);
+        });
+        let (handle, editor) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                let editor = cx.new(PrototypeEditor::new);
+                window.focus(&editor.read(cx).focus_handle(), cx);
+                editor
+            })
+            .expect("prototype window")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            for pointer in [false, true] {
+                editor.update(cx, |editor, cx| {
+                    let end = editor.text.encode_utf16().count();
+                    editor.replace_text_in_range(Some(0..end), "ab", window, cx);
+                });
+                window.render_frame(cx);
+                let bounds = window.find("live-editor").bounds();
+                TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window)
+                    .compose_text(Some(1..1), "中", Some(1..1), cx);
+                if pointer {
+                    let at = editor.read(cx).geometry.borrow()[&1].position_for_index(0);
+                    window.click_at("live-editor", at - bounds.origin, cx);
+                } else {
+                    editor.update(cx, |editor, cx| {
+                        editor.set_selected_text_range(0..0, window, cx);
+                    });
+                }
+                assert!(!editor.read(cx).composition.is_active());
+                window.input("X", cx);
+                assert_eq!(editor.read(cx).text(), "Xa中b");
+                TestInput::new(ElementInputHandler::new(bounds, editor.clone()), window)
+                    .compose_text(None, "", None, cx);
+                assert_eq!(editor.read(cx).text(), "Xa中b");
+            }
+        })
+        .expect("composition retargeting");
     }
 
     #[gpui_kit::test]
@@ -203,7 +326,7 @@ mod tests {
                         cx,
                     );
                     assert_eq!(editor.text(), original);
-                    assert!(editor.marked.is_none());
+                    assert!(!editor.composition.is_active());
                 });
             }
             let mut input =

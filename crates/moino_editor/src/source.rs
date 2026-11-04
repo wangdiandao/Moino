@@ -1,159 +1,129 @@
-//! Full-source Kit Editor adapter; the document remains the sole history owner.
+//! Full-source surface: a native widget submits drafts to one authoritative document queue.
+mod bridge;
+mod input;
+mod render;
+mod transaction;
 use crate::LiveEditor;
+use crate::native_input::PreeditSession;
 use crate::source_change::SourceChange;
-use gpui_kit::component::input::{Editor, EditorState, InputEvent};
+use bridge::{Draft, Publication, SourceBridge};
+use gpui_kit::component::input::{EditorState, InputEvent};
 use gpui_kit::{prelude::*, *};
-use moino_document::{Edit, Origin, Selection, Snapshot, Transaction};
+use moino_document::{Origin, Selection};
 use moino_text::ByteOffset;
-use moino_text::{ScalarOffset, TextBuffer, Utf16Offset};
 use std::{cell::Cell, rc::Rc};
+pub(super) use transaction::transaction;
 
-pub(super) fn normalized_position(source: &str, offset: Utf16Offset) -> Option<ScalarOffset> {
-    let mut units = 0;
-    for (byte, character) in source.char_indices() {
-        if units == offset.value() {
-            return Some(TextBuffer::new(&source[..byte]).len());
-        }
-        units += character.len_utf16();
-    }
-    (units == offset.value()).then(|| TextBuffer::new(source).len())
-}
-
-pub(super) fn transaction(
-    snapshot: &Snapshot,
-    text: &str,
-    selection: Selection,
-    change: Option<SourceChange>,
-    origin: Origin,
-) -> Option<Transaction> {
-    let old = snapshot.text().to_string();
-    if old == text {
-        return None;
-    }
-    let change = change
-        .filter(|change| {
-            old.get(..change.start.value()) == text.get(..change.start.value())
-                && old.get(change.old_end.value()..) == text.get(change.new_end.value()..)
-                && old.is_char_boundary(change.start.value())
-                && old.is_char_boundary(change.old_end.value())
-                && text.is_char_boundary(change.start.value())
-                && text.is_char_boundary(change.new_end.value())
-                && change.start <= change.old_end
-                && change.start <= change.new_end
-        })
-        .unwrap_or(SourceChange {
-            start: ByteOffset::new(0),
-            old_end: ByteOffset::new(old.len()),
-            new_end: ByteOffset::new(text.len()),
-        });
-    let start = snapshot
-        .text()
-        .byte_to_scalar(change.start)
-        .expect("validated source edit");
-    let end = snapshot
-        .text()
-        .byte_to_scalar(change.old_end)
-        .expect("validated source edit");
-    let inserted = &text[change.start.value()..change.new_end.value()];
-    Some(
-        Transaction::new(snapshot, origin)
-            .with_edit(Edit::new(start..end, inserted))
-            .with_selection(selection),
-    )
-}
-
-/// Retains the full-source widget while routing committed edits to the same document.
+/// Owns native source input while the shared document owns revisions and history.
 pub struct SourceEditor {
     state: Entity<EditorState>,
     document: Entity<LiveEditor>,
-    subscriptions: Vec<Subscription>,
-    published: String,
+    bridge: SourceBridge,
+    composition: PreeditSession,
     changes: Rc<Cell<Option<SourceChange>>>,
-    origin: Origin,
-    composing: bool,
     normalized_selection: Option<Selection>,
-    published_selection: Selection,
+    subscriptions: Vec<Subscription>,
 }
+
 impl SourceEditor {
-    /// Creates a source surface for the supplied document session.
+    /// Creates one retained native widget and subscribes to its document queue.
     pub fn new(document: Entity<LiveEditor>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let source = document.read(cx).snapshot().text().to_string();
+        let draft =
+            Draft::from_document(&document.read(cx).snapshot(), document.read(cx).selection());
         let state = cx.new(|cx| {
-            EditorState::new(window, cx)
+            let mut state = EditorState::new(window, cx)
                 .line_number(false)
                 .folding(false)
-                .default_value(source.clone())
+                .default_value(draft.text.clone());
+            state.set_selected_range(draft.byte_selection(), cx);
+            state
         });
-        let mut this = Self {
+        let mut source = Self {
             state: state.clone(),
             document: document.clone(),
-            subscriptions: Vec::new(),
-            published: source,
+            bridge: SourceBridge::new(draft),
+            composition: PreeditSession::default(),
             changes: Rc::default(),
-            origin: Origin::Typing,
-            composing: false,
             normalized_selection: None,
-            published_selection: document.read(cx).selection(),
+            subscriptions: Vec::new(),
         };
-        this.subscriptions.push(cx.subscribe_in(
-            &state,
-            window,
-            |this, state, event, window, cx| {
+        source.subscriptions.push(
+            cx.subscribe_in(&state, window, |this, _, event, window, cx| {
                 if matches!(event, InputEvent::Change) {
-                    let marked = state.update(cx, |state, cx| state.marked_text_range(window, cx));
-                    if marked.is_none() {
-                        this.publish(window, cx);
+                    if let Some(marked) = this.widget_marked(window, cx) {
+                        this.observe_composition(marked);
                     } else {
-                        this.composing = true;
+                        this.publish(window, cx);
                     }
                 }
-            },
-        ));
-        this.subscriptions
+            }),
+        );
+        source
+            .subscriptions
             .push(cx.observe_in(&state, window, |this, _, window, cx| {
                 this.publish_selection(window, cx);
             }));
-        this.subscriptions
+        source
+            .subscriptions
             .push(cx.observe_in(&document, window, |this, _, window, cx| {
-                if !this.document.read(cx).is_pending() {
-                    this.sync(window, cx);
-                }
+                this.sync(window, cx);
             }));
-        this.sync(window, cx);
-        this
+        source.sync(window, cx);
+        source
     }
-    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.document.read(cx).error_code().is_some() {
-            return;
-        }
-        if self.state.read(cx).value().as_ref() != self.published {
-            return;
-        }
-        let snapshot = self.document.read(cx).snapshot();
-        let selected = self.document.read(cx).selection();
-        let source = snapshot.text().to_string();
-        let selection_changed = self.published_selection != selected;
-        let range = snapshot
-            .text()
-            .to_byte(selected.anchor().offset)
-            .expect("validated selection")
-            .value()
-            ..snapshot
-                .text()
-                .to_byte(selected.head().offset)
-                .expect("validated selection")
-                .value();
+
+    fn widget_marked(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<std::ops::Range<usize>> {
+        self.state
+            .update(cx, |state, cx| state.marked_text_range(window, cx))
+    }
+
+    fn capture(&self, window: &mut Window, cx: &mut Context<Self>) -> Option<Draft> {
         self.state.update(cx, |state, cx| {
-            if state.value().as_ref() != source {
-                state.set_value(source, window, cx);
-                state.set_selected_range(range, cx);
-            } else if selection_changed {
+            Draft::capture(
+                state.value().as_ref(),
+                state.selected_text_range(false, window, cx)?,
+            )
+        })
+    }
+
+    fn observe_composition(&mut self, marked: std::ops::Range<usize>) {
+        let submitted = self.bridge.submitted();
+        self.composition
+            .begin(&submitted.text, submitted.native_selection());
+        self.composition.update_marked(marked);
+    }
+
+    fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let owner = self.document.read(cx);
+        if owner.is_pending()
+            || owner.error_code().is_some()
+            || self.composition.is_active()
+            || self.state.read(cx).value().as_ref() != self.bridge.submitted().text
+        {
+            return;
+        }
+        let snapshot = owner.snapshot();
+        let draft = Draft::from_document(&snapshot, owner.selection());
+        let changed_text = self.state.read(cx).value().as_ref() != draft.text;
+        // Native navigation can precede its observer. An unchanged owner
+        // notification must not restore the previous caret over that new input.
+        let changed_selection = self.bridge.submitted().selection != draft.selection;
+        let range = draft.byte_selection();
+        self.state.update(cx, |state, cx| {
+            if changed_text {
+                state.set_value(draft.text.clone(), window, cx);
+            }
+            if changed_text || changed_selection {
                 state.set_selected_range(range, cx);
             }
             let changes = self.changes.clone();
             state.set_highlighter_factory(
-                std::rc::Rc::new(move |_| {
-                    Some(Box::new(super::source_highlight::SourceHighlighter::new(
+                Rc::new(move |_| {
+                    Some(Box::new(crate::source_highlight::SourceHighlighter::new(
                         &snapshot,
                         changes.clone(),
                     )))
@@ -161,265 +131,125 @@ impl SourceEditor {
                 cx,
             );
         });
-        self.published = self.state.read(cx).value().to_string();
-        self.published_selection = selected;
+        self.normalized_selection = Some(draft.selection);
+        self.bridge.adopt(draft);
         self.changes.set(None);
     }
-    fn publish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let raw = self.state.read(cx).value().to_string();
-        let Some(selected) = self
-            .state
-            .update(cx, |state, cx| state.selected_text_range(false, window, cx))
-        else {
-            return;
-        };
-        let text = TextBuffer::new(&raw);
-        let source = text.to_string();
-        let change = self.changes.take().map(|mut change| {
-            if raw != source
-                && let Some(prefix) = raw.get(..change.new_end.value())
-            {
-                change.new_end = ByteOffset::new(moino_text::normalize_newlines(prefix).len());
-            }
-            change
-        });
-        let origin = if self.composing {
-            Origin::Composition
-        } else {
-            self.origin
-        };
-        self.composing = false;
-        self.origin = Origin::Typing;
-        let position = |offset| {
-            if raw == source {
-                text.utf16_to_scalar(Utf16Offset::new(offset)).ok()
-            } else {
-                normalized_position(&raw, Utf16Offset::new(offset))
-            }
-        };
-        if let (Some(start), Some(end)) =
-            (position(selected.range.start), position(selected.range.end))
-        {
-            let (anchor, head) = if selected.reversed {
-                (end, start)
-            } else {
-                (start, end)
-            };
-            self.published = source.clone();
-            if raw != source {
-                self.state.update(cx, |state, cx| {
-                    state.set_value(source.clone(), window, cx);
-                    state.set_selected_range(
-                        text.to_byte(anchor).expect("normalized anchor").value()
-                            ..text.to_byte(head).expect("normalized head").value(),
-                        cx,
-                    );
+
+    fn submit(
+        &mut self,
+        publication: Option<Publication>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match publication {
+            Some(Publication::Text {
+                text,
+                selection,
+                change,
+                origin,
+            }) => {
+                self.document.update(cx, |document, cx| {
+                    document.replace_source_edit(text, selection, change, origin, window, cx)
                 });
             }
-            self.published_selection = super::live::selection(anchor, head);
-            self.document.update(cx, |document, cx| {
-                document.replace_source_edit(
-                    source,
-                    super::live::selection(anchor, head),
-                    change,
-                    origin,
-                    window,
-                    cx,
-                )
-            });
+            Some(Publication::Selection(selection)) => {
+                self.document.update(cx, |document, cx| {
+                    document.select_source_after_pending(selection, window, cx)
+                });
+            }
+            None => {}
         }
     }
-    fn publish_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.state.read(cx).value().as_ref() != self.published || self.composing {
+
+    fn publish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.widget_marked(window, cx).is_some() {
             return;
         }
-        let selected = self.state.update(cx, |state, cx| {
-            let selected = state.selected_text_range(false, window, cx)?;
-            let text = TextBuffer::new(state.value().as_ref());
-            let start = text
-                .utf16_to_scalar(Utf16Offset::new(selected.range.start))
-                .ok()?;
-            let end = text
-                .utf16_to_scalar(Utf16Offset::new(selected.range.end))
-                .ok()?;
-            let anchor = if selected.reversed { end } else { start };
-            let head = if selected.reversed { start } else { end };
-            let selection = super::live::selection(anchor, head);
-            if self.normalized_selection != Some(selection) {
-                let anchor_byte = text.to_byte(anchor).ok()?.value();
-                let head_byte = text.to_byte(head).ok()?.value();
-                state.set_selected_range(anchor_byte..head_byte, cx);
-                self.normalized_selection = Some(selection);
+        let Some(draft) = self.capture(window, cx) else {
+            return;
+        };
+        let raw = self.state.read(cx).value().to_string();
+        let mut change = self.changes.take();
+        if raw != draft.text {
+            if let Some(edit) = &mut change
+                && let Some(prefix) = raw.get(..edit.new_end.value())
+            {
+                edit.new_end = ByteOffset::new(moino_text::normalize_newlines(prefix).len());
             }
-            Some(selection)
-        });
-        if let Some(selected) = selected
-            && selected != self.published_selection
-        {
-            self.published_selection = selected;
-            self.document.update(cx, |document, cx| {
-                document.select_source_after_pending(selected, window, cx)
+            let range = draft.byte_selection();
+            self.state.update(cx, |state, cx| {
+                state.set_value(draft.text.clone(), window, cx);
+                state.set_selected_range(range, cx);
             });
+            self.changes.set(None);
         }
+        let composition = self.composition.finish();
+        let publication = self.bridge.publish(draft, change, composition);
+        self.submit(publication, window, cx);
     }
-    /// Focuses the source widget with the shared document selection.
+
+    fn publish_selection(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.composition.is_active()
+            || self.widget_marked(window, cx).is_some()
+            || self.state.read(cx).value().as_ref() != self.bridge.submitted().text
+        {
+            return;
+        }
+        let Some(draft) = self.capture(window, cx) else {
+            return;
+        };
+        if self.normalized_selection != Some(draft.selection) {
+            let range = draft.byte_selection();
+            self.state
+                .update(cx, |state, cx| state.set_selected_range(range, cx));
+            self.normalized_selection = Some(draft.selection);
+        }
+        let publication = self.bridge.publish(draft, None, false);
+        self.submit(publication, window, cx);
+    }
+
+    /// Restores the shared direction selection and focuses the source widget.
     pub fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync(window, cx);
-        let snapshot = self.document.read(cx).snapshot();
-        let selected = self.document.read(cx).selection();
+        let draft = Draft::from_document(
+            &self.document.read(cx).snapshot(),
+            self.document.read(cx).selection(),
+        );
+        let range = draft.byte_selection();
         self.state.update(cx, |state, cx| {
-            let start = snapshot
-                .text()
-                .to_byte(selected.anchor().offset)
-                .expect("selection")
-                .value();
-            let end = snapshot
-                .text()
-                .to_byte(selected.head().offset)
-                .expect("selection")
-                .value();
-            state.set_selected_range(start..end, cx);
+            state.set_selected_range(range, cx);
             state.focus(window, cx);
         });
         self.document.update(cx, |document, cx| {
-            document.select_source(selected, window, cx)
+            document.select_source(draft.selection, window, cx)
         });
     }
-    /// Commits native preedit and transfers the source selection before leaving.
+
+    /// Commits native preedit exactly once before navigation, commands or a surface switch.
     pub fn leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(marked) = self.widget_marked(window, cx) {
+            self.observe_composition(marked);
+        }
         self.state
             .update(cx, |state, cx| state.unmark_text(window, cx));
         self.publish(window, cx);
     }
+
     fn before_command(&mut self, origin: Origin, window: &mut Window, cx: &mut Context<Self>) {
         self.leave(window, cx);
-        self.origin = origin;
+        self.bridge.command(origin);
     }
-}
-impl Render for SourceEditor {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        use gpui_kit::component::ActiveTheme;
-        div()
-            .id("source-surface")
-            .test_support()
-            .key_context("MoinoSource")
-            .size_full()
-            .relative()
-            .capture_action(cx.listener(
-                |this, _: &gpui_kit::component::input::Copy, window, cx| {
-                    this.leave(window, cx);
-                    cx.propagate();
-                },
-            ))
-            .capture_action(cx.listener(
-                |this, _: &gpui_kit::component::input::Backspace, window, cx| {
-                    this.before_command(Origin::Command, window, cx);
-                    cx.propagate();
-                },
-            ))
-            .capture_action(cx.listener(
-                |this, _: &gpui_kit::component::input::Delete, window, cx| {
-                    this.before_command(Origin::Command, window, cx);
-                    cx.propagate();
-                },
-            ))
-            .capture_action(cx.listener(
-                |this, _: &gpui_kit::component::input::Indent, window, cx| {
-                    this.before_command(Origin::Command, window, cx);
-                    cx.propagate();
-                },
-            ))
-            .capture_action(cx.listener(
-                |this, _: &gpui_kit::component::input::Outdent, window, cx| {
-                    this.before_command(Origin::Command, window, cx);
-                    cx.propagate();
-                },
-            ))
-            .on_action(cx.listener(|this, _: &crate::Undo, window, cx| {
-                this.leave(window, cx);
-                this.document
-                    .update(cx, |document, cx| document.undo(window, cx));
-                cx.stop_propagation();
-            }))
-            .on_action(cx.listener(|this, _: &crate::Redo, window, cx| {
-                this.leave(window, cx);
-                this.document
-                    .update(cx, |document, cx| document.redo(window, cx));
-                cx.stop_propagation();
-            }))
-            .capture_key_down(cx.listener(|this, _, window, cx| {
-                this.normalized_selection = None;
-                this.publish_selection(window, cx);
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| this.publish_selection(window, cx)),
-            )
-            .capture_action(cx.listener(
-                |this, _: &gpui_kit::component::input::Paste, window, cx| {
-                    this.before_command(Origin::Paste, window, cx);
-                    cx.propagate();
-                },
-            ))
-            .capture_action(
-                cx.listener(|this, _: &gpui_kit::component::input::Cut, window, cx| {
-                    this.before_command(Origin::Command, window, cx);
-                    cx.propagate();
-                }),
-            )
-            .capture_action(cx.listener(
-                |this, _: &gpui_kit::component::input::Enter, window, cx| {
-                    this.before_command(Origin::Command, window, cx);
-                    cx.propagate();
-                },
-            ))
-            .capture_action(cx.listener(
-                |this, _: &gpui_kit::component::input::Undo, window, cx| {
-                    this.leave(window, cx);
-                    this.document
-                        .update(cx, |document, cx| document.undo(window, cx));
-                    cx.stop_propagation();
-                },
-            ))
-            .capture_action(cx.listener(
-                |this, _: &gpui_kit::component::input::Redo, window, cx| {
-                    this.leave(window, cx);
-                    this.document
-                        .update(cx, |document, cx| document.redo(window, cx));
-                    cx.stop_propagation();
-                },
-            ))
-            .child(
-                Editor::new(&self.state)
-                    .readonly(self.document.read(cx).is_read_only())
-                    .appearance(false)
-                    .bordered(false)
-                    .context_menu(|menu, _, _| menu)
-                    .h_full()
-                    .font_family(cx.theme().mono_font_family.clone())
-                    .text_size(moino_theme::code_size())
-                    .line_height(relative(1.6))
-                    .aria_label("Markdown source"),
-            )
-            .when_some(self.document.read(cx).error_code(), |surface, code| {
-                let message = moino_ui::editing_error(code);
-                surface.child(
-                    div()
-                        .id("source-error")
-                        .test_support()
-                        .role(Role::Alert)
-                        .aria_label(message.clone())
-                        .absolute()
-                        .left_0()
-                        .right_0()
-                        .bottom_0()
-                        .bg(cx.theme().popover)
-                        .text_color(cx.theme().danger)
-                        .px_3()
-                        .py_2()
-                        .child(message),
-                )
-            })
+
+    fn before_navigation<A: Action>(&mut self, _: &A, window: &mut Window, cx: &mut Context<Self>) {
+        self.leave(window, cx);
+        self.normalized_selection = None;
+        cx.propagate();
+    }
+
+    fn before_edit<A: Action>(&mut self, _: &A, window: &mut Window, cx: &mut Context<Self>) {
+        self.before_command(Origin::Command, window, cx);
+        cx.propagate();
     }
 }
 

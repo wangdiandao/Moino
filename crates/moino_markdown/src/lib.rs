@@ -1,5 +1,6 @@
 //! L0 lossless Markdown syntax and node identities; depends only on moino_text internally.
 #![forbid(unsafe_code)]
+mod heading;
 
 use finl_unicode::categories::CharacterCategories;
 use moino_text::{ByteOffset, ScalarOffset, TextBuffer};
@@ -49,13 +50,15 @@ pub enum Extension {
     FrontMatter,
     /// Footnotes.
     Footnotes,
+    /// Typora-compatible ATX and Setext heading recognition.
+    LooseHeadings,
 }
 /// Effective dialect configuration; disabled extensions remain ordinary source.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Extensions(u16);
 impl Default for Extensions {
     fn default() -> Self {
-        Self((1 << 12) - 1)
+        Self((1 << 13) - 1)
     }
 }
 impl Extensions {
@@ -318,7 +321,12 @@ impl Cst {
         let mut stack: Vec<Node> = Vec::new();
         let mut roots = Vec::new();
         let mut next_id = 1;
-        for (event, bytes) in events(&source, options) {
+        let parsed = if extensions.is_enabled(Extension::LooseHeadings) {
+            heading::events(&source, options, text, &mut references)
+        } else {
+            events(&source, options).collect()
+        };
+        for (event, bytes) in parsed {
             let raw = text
                 .byte_to_scalar(ByteOffset::new(bytes.start))
                 .expect("parser UTF-8 boundary")

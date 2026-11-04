@@ -6,6 +6,34 @@ use gpui_kit::{prelude::*, *};
 use moino_editor::{DedicatedProbe, PrototypeEditor};
 use std::sync::Arc;
 
+const MATH_SOURCE: &str = r"\frac{-b \pm \sqrt{b^2-4ac}}{2a}";
+const DIAGRAM_SOURCE: &str = "flowchart LR\nA[Markdown] --> B[Native layout] --> C[PDF]";
+const PDF_SOURCE: &str = "#set page(width: 260pt, height: 160pt, margin: 20pt)\n= Moino\n中文 · 日本語 · 한국어\n\nPDF → hayro → GPUI";
+
+struct RenderResults {
+    math: Result<String, String>,
+    diagram: Result<String, String>,
+    preview: Result<Vec<u8>, String>,
+}
+
+impl RenderResults {
+    fn prepare() -> Self {
+        let math = moino_math::render_svg(MATH_SOURCE).map_err(|error| error.to_string());
+        let diagram = moino_diagram::render_svg(DIAGRAM_SOURCE).map_err(|error| error.to_string());
+        let preview = moino_export::compile_prototype(PDF_SOURCE)
+            .map_err(|error| error.to_string())
+            .and_then(|pdf| {
+                moino_preview::render_pdf_page(pdf.bytes().to_vec(), 0)
+                    .map_err(|error| error.to_string())
+            });
+        Self {
+            math,
+            diagram,
+            preview,
+        }
+    }
+}
+
 actions!(
     m0,
     [
@@ -84,35 +112,10 @@ impl PrototypeWorkspace {
         let menu = AppMenuBar::new(cx);
         let render = cx.spawn(async move |this, cx| {
             let result = cx
-                .background_spawn(async {
-                    let math = moino_math::render_svg(r"\frac{-b \pm \sqrt{b^2-4ac}}{2a}")
-                        .map_err(|error| error.to_string())?;
-                    let diagram = moino_diagram::render_svg(
-                        "flowchart LR\nA[Markdown] --> B[Native layout] --> C[PDF]",
-                    )
-                    .map_err(|error| error.to_string())?;
-                let pdf = moino_export::compile_prototype("#set page(width: 260pt, height: 160pt, margin: 20pt)\n= Moino\n中文 · 日本語 · 한국어\n\nPDF → hayro → GPUI")
-                    .map_err(|error| error.to_string())?;
-                let preview = moino_preview::render_pdf_page(pdf.bytes().to_vec(), 0)
-                    .map_err(|error| error.to_string())?;
-                Ok::<_, String>((math, diagram, preview))
-                })
+                .background_spawn(async { RenderResults::prepare() })
                 .await;
             let _ = this.update(cx, |this, cx| {
-                match result {
-                    Ok((math, diagram, preview)) => {
-                        this.math = Some(Arc::new(Image::from_bytes(
-                            ImageFormat::Svg,
-                            math.into_bytes(),
-                        )));
-                        this.diagram = Some(Arc::new(Image::from_bytes(
-                            ImageFormat::Svg,
-                            diagram.into_bytes(),
-                        )));
-                        this.preview = Some(Arc::new(Image::from_bytes(ImageFormat::Png, preview)));
-                    }
-                    Err(error) => this.error = Some(error.into()),
-                }
+                this.publish_renders(result);
                 cx.notify();
             }); // A closed validation window has no result owner.
         });
@@ -129,6 +132,30 @@ impl PrototypeWorkspace {
             error: None,
             _render: render,
         }
+    }
+    fn publish_renders(&mut self, result: RenderResults) {
+        let mut errors = Vec::new();
+        let mut image = |result: Result<Vec<u8>, String>, format, label, source| match result {
+            Ok(bytes) => Some(Arc::new(Image::from_bytes(format, bytes))),
+            Err(error) => {
+                errors.push(format!("{label}：{error}\n{source}"));
+                None
+            }
+        };
+        self.math = image(
+            result.math.map(String::into_bytes),
+            ImageFormat::Svg,
+            "数学",
+            MATH_SOURCE,
+        );
+        self.diagram = image(
+            result.diagram.map(String::into_bytes),
+            ImageFormat::Svg,
+            "图表",
+            DIAGRAM_SOURCE,
+        );
+        self.preview = image(result.preview, ImageFormat::Png, "PDF 预览", PDF_SOURCE);
+        self.error = (!errors.is_empty()).then(|| errors.join("\n\n").into());
     }
     fn show_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.menu_visible || !moino_platform::has_window_menu() {
@@ -229,7 +256,13 @@ impl Render for PrototypeWorkspace {
                                 )
                             })
                             .when_some(self.error.clone(), |this, error| {
-                                this.child(div().id("render-error").role(Role::Alert).child(error))
+                                this.child(
+                                    div()
+                                        .id("render-error")
+                                        .test_support()
+                                        .role(Role::Alert)
+                                        .child(error),
+                                )
                             }),
                     ),
             )
@@ -256,9 +289,48 @@ impl Render for PrototypeWorkspace {
 
 #[cfg(test)]
 mod tests {
-    use super::{PrototypeWorkspace, init};
+    use super::{DIAGRAM_SOURCE, MATH_SOURCE, PDF_SOURCE, PrototypeWorkspace, RenderResults, init};
     use gpui_kit::test::{TestEventExt, TestWindowExt};
     use gpui_kit::{AppContext, Modifiers, TestAppContext};
+    #[gpui_kit::test]
+    // Spec: docs/architecture.md#错误模型
+    fn a_failed_probe_keeps_other_engine_results_and_editable_text(cx: &mut TestAppContext) {
+        cx.update(init);
+        let (handle, workspace) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| PrototypeWorkspace::new(window, cx))
+            })
+            .expect("prototype window")
+        });
+        let result = RenderResults {
+            math: moino_math::render_svg(r"\frac{").map_err(|error| error.to_string()),
+            diagram: moino_diagram::render_svg(DIAGRAM_SOURCE).map_err(|error| error.to_string()),
+            preview: moino_preview::render_pdf_page(b"invalid PDF".to_vec(), 0)
+                .map_err(|error| error.to_string()),
+        };
+        cx.update_window(handle, |_, window, cx| {
+            let text = workspace.read(cx).editor.read(cx).text().to_owned();
+            workspace.update(cx, |workspace, cx| {
+                workspace.publish_renders(result);
+                cx.notify();
+            });
+            window.render_frame(cx);
+            let state = workspace.read(cx);
+            assert!(state.math.is_none());
+            assert!(state.diagram.is_some());
+            assert!(state.preview.is_none());
+            let error = state.error.as_ref().expect("failed engine diagnostics");
+            assert!(error.contains(MATH_SOURCE));
+            assert!(error.contains(PDF_SOURCE));
+            assert!(window.try_find("render-error").is_some());
+            window.input("输入", cx);
+            assert_eq!(
+                workspace.read(cx).editor.read(cx).text(),
+                format!("输入{text}")
+            );
+        })
+        .expect("independent render failures");
+    }
     #[gpui_kit::test]
     // Spec: docs/acceptance/m0.md#真实系统检查
     fn prototype_menu_waits_for_mount_before_moving_focus(cx: &mut TestAppContext) {

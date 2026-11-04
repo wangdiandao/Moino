@@ -1,19 +1,74 @@
+//! Native UTF-16 events become validated edits before entering the document queue.
 use super::*;
+use crate::native_input::{NormalizedInput, native_range};
+use std::ops::Range;
+
+struct Replacement {
+    range: Range<ScalarOffset>,
+    text: String,
+    selection: Range<usize>,
+}
+
+impl LiveEditor {
+    fn replacement(
+        &self,
+        range: Option<Range<usize>>,
+        input: &NormalizedInput,
+    ) -> Option<Replacement> {
+        let target = match range.as_ref() {
+            Some(range) => self.native_range(range.clone())?,
+            None => self.composition.as_ref().map_or_else(
+                || self.document.selection().range(),
+                |composition| composition.range.clone(),
+            ),
+        };
+        if let (Some(native), Some(composition)) = (range, &self.composition) {
+            let display = self.display_text();
+            let replaced = native_range(&display, native)?;
+            let union =
+                target.start.min(composition.range.start)..target.end.max(composition.range.end);
+            let end = ScalarOffset::new(
+                union.end.value() - composition.range.end.value()
+                    + composition.range.start.value()
+                    + composition.text.chars().count(),
+            );
+            let prefix = display.slice(union.start..replaced.start).ok()?;
+            let suffix = display.slice(replaced.end..end).ok()?;
+            let shift = prefix.encode_utf16().count();
+            return Some(Replacement {
+                range: union,
+                text: format!("{prefix}{}{suffix}", input.text()),
+                selection: shift + input.selection().start..shift + input.selection().end,
+            });
+        }
+        let range = if target.is_empty() && self.composition.is_none() {
+            let at = self.content_position(target.start);
+            at..at
+        } else {
+            target
+        };
+        Some(Replacement {
+            range,
+            text: input.text().into(),
+            selection: input.selection(),
+        })
+    }
+}
 
 impl EntityInputHandler for LiveEditor {
     fn text_for_range(
         &mut self,
-        range: std::ops::Range<usize>,
-        adjusted: &mut Option<std::ops::Range<usize>>,
+        range: Range<usize>,
+        adjusted: &mut Option<Range<usize>>,
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<String> {
         let text = self.display_text();
-        let start = text.utf16_to_scalar(Utf16Offset::new(range.start)).ok()?;
-        let end = text.utf16_to_scalar(Utf16Offset::new(range.end)).ok()?;
+        let value = text.slice(native_range(&text, range.clone())?).ok()?;
         *adjusted = Some(range);
-        text.slice(start..end).ok()
+        Some(value)
     }
+
     fn selected_text_range(
         &mut self,
         _: bool,
@@ -22,11 +77,8 @@ impl EntityInputHandler for LiveEditor {
     ) -> Option<UTF16Selection> {
         self.native_selection()
     }
-    fn marked_text_range(
-        &self,
-        _: &mut Window,
-        _: &mut Context<Self>,
-    ) -> Option<std::ops::Range<usize>> {
+
+    fn marked_text_range(&self, _: &mut Window, _: &mut Context<Self>) -> Option<Range<usize>> {
         let composition = self.composition.as_ref()?;
         let start = self
             .document
@@ -37,126 +89,102 @@ impl EntityInputHandler for LiveEditor {
             .value();
         Some(start..start + composition.text.encode_utf16().count())
     }
+
     fn unmark_text(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_composition(window, cx);
     }
+
     fn replace_text_in_range(
         &mut self,
-        range: Option<std::ops::Range<usize>>,
+        range: Option<Range<usize>>,
         text: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let target = if let Some(range) = range {
-            let Some(target) = self.native_range(range) else {
-                return;
-            };
-            Some(target)
-        } else {
-            None
+        if self.is_read_only() {
+            return;
+        }
+        let Some(input) = NormalizedInput::new(text, None) else {
+            return;
         };
-        let composing = self.composition.take();
-        if let Some(target) = target {
-            self.enqueue(
-                self.selection_operation(selection(target.start, target.end)),
-                window,
-                cx,
-            );
-        } else if let Some(composition) = &composing
-            && !composition.follows_pending
+        let explicit = range.is_some();
+        let Some(replacement) = self.replacement(range, &input) else {
+            return;
+        };
+        self.keyboard_boundary();
+        let composition = self.composition.take();
+        // Implicit native typing is relative to the queue tail, not the last painted frame.
+        if explicit
+            || composition
+                .as_ref()
+                .is_some_and(|composition| !composition.follows_pending)
         {
             self.enqueue(
-                self.selection_operation(selection(composition.range.start, composition.range.end)),
+                self.selection_operation(selection(replacement.range.start, replacement.range.end)),
                 window,
                 cx,
             );
         }
         self.enqueue(
-            Operation::Intent(if composing.is_some() {
-                Intent::Composition(text.into())
+            Operation::Intent(if composition.is_some() {
+                Intent::Composition(replacement.text)
             } else {
-                Intent::Insert(text.into())
+                Intent::Insert(replacement.text)
             }),
             window,
             cx,
         );
     }
+
     fn replace_and_mark_text_in_range(
         &mut self,
-        range: Option<std::ops::Range<usize>>,
+        range: Option<Range<usize>>,
         text: &str,
-        selected: Option<std::ops::Range<usize>>,
+        selected: Option<Range<usize>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.options.is_read_only() || self.document.is_protected() {
+        if self.is_read_only() {
             return;
         }
-        if text.is_empty() {
-            self.composition = None;
-            self.refresh(window, cx);
+        let Some(input) = NormalizedInput::new(text, selected) else {
             return;
-        }
+        };
         let follows_pending = self
             .composition
             .as_ref()
             .map_or(range.is_none() && self.is_pending(), |composition| {
                 composition.follows_pending
             });
-        let range = if let Some(range) = range {
-            let Some(target) = self.native_range(range) else {
-                return;
-            };
-            target
-        } else {
-            self.composition.as_ref().map_or_else(
-                || self.document.selection().range(),
-                |value| value.range.clone(),
-            )
+        let Some(replacement) = self.replacement(range, &input) else {
+            return;
         };
-        let normalized = moino_text::normalize_newlines(text);
-        let len = normalized.encode_utf16().count();
-        let preedit = TextBuffer::new(&normalized);
-        let selected = if let Some(selected) = selected {
-            if selected.start > selected.end {
-                return;
-            }
-            let position = |offset| {
-                crate::source::normalized_position(text, Utf16Offset::new(offset))
-                    .and_then(|at| preedit.to_utf16(at).ok())
-                    .map(Utf16Offset::value)
-            };
-            let (Some(start), Some(end)) = (position(selected.start), position(selected.end))
-            else {
-                return;
-            };
-            start..end
+        self.keyboard_boundary();
+        if text.is_empty() {
+            self.composition = None;
         } else {
-            len..len
-        };
-        self.composition = Some(Composition {
-            range,
-            text: normalized,
-            selection: selected,
-            follows_pending,
-            revision: self.document.snapshot().revision(),
-        });
+            self.composition = Some(Composition {
+                range: replacement.range,
+                text: replacement.text,
+                selection: replacement.selection,
+                follows_pending,
+                revision: self.document.snapshot().revision(),
+            });
+        }
         self.reveal_caret = true;
         self.refresh(window, cx);
     }
+
     fn bounds_for_range(
         &mut self,
-        range: std::ops::Range<usize>,
+        range: Range<usize>,
         _: Bounds<Pixels>,
         _: &mut Window,
         _: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
-        let at = self
-            .display_text()
-            .utf16_to_scalar(Utf16Offset::new(range.start))
-            .ok()?;
-        self.caret(at)
+        self.caret(native_range(&self.display_text(), range)?.start)
     }
+
     fn character_index_for_point(
         &mut self,
         point: Point<Pixels>,
@@ -166,26 +194,24 @@ impl EntityInputHandler for LiveEditor {
         self.display_text()
             .to_utf16(self.hit(point)?)
             .ok()
-            .map(|at| at.value())
+            .map(Utf16Offset::value)
     }
+
     fn set_selected_text_range(
         &mut self,
-        range: std::ops::Range<usize>,
+        range: Range<usize>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let text = self.display_text();
-        if let (Ok(start), Ok(end)) = (
-            text.utf16_to_scalar(Utf16Offset::new(range.start)),
-            text.utf16_to_scalar(Utf16Offset::new(range.end)),
-        ) && start <= end
-        {
-            self.select(selection(start, end), window, cx);
+        if let Some(range) = native_range(&self.display_text(), range) {
+            self.keyboard_boundary();
+            self.select(selection(range.start, range.end), window, cx);
         }
     }
+
     fn text_length_utf16(&mut self, _: &mut Window, _: &mut Context<Self>) -> Option<usize> {
         let text = self.display_text();
-        Some(text.to_utf16(text.len()).ok()?.value())
+        text.to_utf16(text.len()).ok().map(Utf16Offset::value)
     }
 }
 

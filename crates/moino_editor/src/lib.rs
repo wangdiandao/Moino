@@ -5,6 +5,7 @@ mod dedicated;
 mod input;
 mod live;
 mod live_surface;
+mod native_input;
 mod projection;
 mod source;
 mod source_change;
@@ -19,6 +20,7 @@ use gpui_kit::base::text::editor_host::{
 };
 use gpui_kit::component::ActiveTheme;
 use gpui_kit::{prelude::*, *};
+use moino_text::{TextBuffer, Utf16Offset};
 use std::{cell::RefCell, collections::HashMap, ops::Range, rc::Rc};
 
 actions!(
@@ -40,11 +42,10 @@ pub struct PrototypeEditor {
     text: String,
     selection: Range<usize>,
     selection_reversed: bool,
-    marked: Option<Range<usize>>,
-    original_composition: Option<(String, Range<usize>, bool)>,
+    composition: native_input::PreeditSession,
     focus: FocusHandle,
     geometry: Rc<RefCell<HashMap<u64, LeafGeometry>>>,
-    accessible_runs: Rc<RefCell<HashMap<accesskit::NodeId, Range<usize>>>>,
+    accessible_runs: Rc<RefCell<accessibility::TextRuns>>,
 }
 
 impl PrototypeEditor {
@@ -54,8 +55,7 @@ impl PrototypeEditor {
             text: "墨 Moino · 中文 日本語 한국어 😀".into(),
             selection: 0..0,
             selection_reversed: false,
-            marked: None,
-            original_composition: None,
+            composition: native_input::PreeditSession::default(),
             focus: cx.focus_handle().tab_stop(true),
             geometry: Rc::default(),
             accessible_runs: Rc::default(),
@@ -75,58 +75,77 @@ impl PrototypeEditor {
         cx.notify();
     }
 
+    fn finish_composition(&mut self) {
+        self.composition.finish();
+    }
+
+    fn adjacent_grapheme(&self, offset: usize, forward: bool) -> Option<usize> {
+        let text = TextBuffer::new(&self.text);
+        let at = text.utf16_to_scalar(Utf16Offset::new(offset)).ok()?;
+        let next = if forward {
+            text.next_grapheme(at)
+        } else {
+            text.previous_grapheme(at)
+        }
+        .ok()?;
+        text.to_utf16(next).ok().map(Utf16Offset::value)
+    }
+
     fn edit(&mut self, range: Option<Range<usize>>, text: &str) -> Option<Range<usize>> {
         let target = range
-            .or_else(|| self.marked.clone())
+            .or_else(|| self.composition.marked_range())
             .unwrap_or_else(|| self.selection.clone());
-        let start = byte_from_utf16(&self.text, target.start)?;
-        let end = byte_from_utf16(&self.text, target.end)?;
-        if start > end {
-            return None;
-        }
-        let normalized = text.replace("\r\n", "\n").replace('\r', "\n");
-        self.text.replace_range(start..end, &normalized);
-        let cursor = target.start + normalized.encode_utf16().count();
+        let buffer = TextBuffer::new(&self.text);
+        let range = native_input::native_range(&buffer, target.clone())?;
+        let start = buffer.to_byte(range.start).ok()?.value();
+        let end = buffer.to_byte(range.end).ok()?.value();
+        let input = native_input::NormalizedInput::new(text, None)?;
+        self.text.replace_range(start..end, input.text());
+        let cursor = target.start + input.selection().end;
         self.selection = cursor..cursor;
         self.selection_reversed = false;
         Some(target.start..cursor)
     }
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_composition();
         if self.selection.is_empty() && self.selection.start > 0 {
-            let Some(byte) = byte_from_utf16(&self.text, self.selection.start) else {
+            let Some(previous) = self.adjacent_grapheme(self.selection.start, false) else {
                 return;
             };
-            if let Some(ch) = self.text[..byte].chars().next_back() {
-                self.selection.start -= ch.len_utf16();
-            }
+            self.selection.start = previous;
         }
         if self.edit(None, "").is_some() {
             self.changed(window, cx);
         }
     }
     fn enter(&mut self, _: &Enter, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish_composition();
         if self.edit(None, "\n").is_some() {
             self.changed(window, cx);
         }
     }
     fn left(&mut self, _: &Left, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(byte) = byte_from_utf16(&self.text, self.selection.start) {
-            let at = self.selection.start.saturating_sub(
-                self.text[..byte]
-                    .chars()
-                    .next_back()
-                    .map_or(0, char::len_utf16),
-            );
+        self.finish_composition();
+        let at = if self.selection.is_empty() {
+            self.adjacent_grapheme(self.selection.start, false)
+        } else {
+            Some(self.selection.start)
+        };
+        if let Some(at) = at {
             self.selection = at..at;
             self.selection_reversed = false;
             self.changed(window, cx);
         }
     }
     fn right(&mut self, _: &Right, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(byte) = byte_from_utf16(&self.text, self.selection.end) {
-            let at =
-                self.selection.end + self.text[byte..].chars().next().map_or(0, char::len_utf16);
+        self.finish_composition();
+        let at = if self.selection.is_empty() {
+            self.adjacent_grapheme(self.selection.end, true)
+        } else {
+            Some(self.selection.end)
+        };
+        if let Some(at) = at {
             self.selection = at..at;
             self.selection_reversed = false;
             self.changed(window, cx);
@@ -148,12 +167,20 @@ pub fn init(cx: &mut App) {
 impl Render for PrototypeEditor {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let mut paragraph = Paragraph::default().with_leaf_key(1);
-        let marks = self
+        let mut marks: Vec<_> = self
             .text
             .find("Moino")
             .map(|start| (start..start + "Moino".len(), TextMark::default().bold()))
             .into_iter()
             .collect();
+        if let Some(range) = self.composition.marked_range()
+            && let (Some(start), Some(end)) = (
+                byte_from_utf16(&self.text, range.start),
+                byte_from_utf16(&self.text, range.end),
+            )
+        {
+            marks.push((start..end, TextMark::default().underline()));
+        }
         paragraph.push(
             InlineNode::new(if self.text.is_empty() {
                 " ".into()
@@ -202,6 +229,7 @@ impl Render for PrototypeEditor {
                         value_owner.update(cx, |editor, cx| {
                             let end = editor.text.encode_utf16().count();
                             if editor.edit(Some(0..end), value).is_some() {
+                                editor.finish_composition();
                                 editor.changed(window, cx);
                             }
                         });
@@ -212,11 +240,13 @@ impl Render for PrototypeEditor {
                     move |data, window, cx| {
                         if let Some(accesskit::ActionData::SetTextSelection(selection)) = data {
                             selection_owner.update(cx, |editor, cx| {
-                                if let Some((range, reversed)) = accessibility::native_selection(
+                                let selection = accessibility::native_selection(
                                     &editor.text,
                                     selection,
                                     &editor.accessible_runs.borrow(),
-                                ) {
+                                );
+                                if let Some((range, reversed)) = selection {
+                                    editor.finish_composition();
                                     editor.selection = range;
                                     editor.selection_reversed = reversed;
                                 }
@@ -235,6 +265,7 @@ impl Render for PrototypeEditor {
                     MouseButton::Left,
                     cx.listener(|this, event: &MouseDownEvent, window, cx| {
                         this.focus.focus(window, cx);
+                        this.finish_composition();
                         if let Some(geometry) = this.geometry.borrow().get(&1) {
                             let byte = geometry
                                 .index_for_position(event.position)

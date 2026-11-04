@@ -51,47 +51,23 @@ actions!(
     ]
 );
 
-enum Operation {
-    Intent(Intent),
-    Source {
-        text: String,
-        selection: Selection,
-        change: Option<crate::source_change::SourceChange>,
-        origin: moino_document::Origin,
-    },
-    Select(Selection, moino_document::Revision),
-    SelectAfterPending(Selection),
-    Navigate {
-        forward: bool,
-        extend: bool,
-    },
-    Vertical {
-        forward: bool,
-        extend: bool,
-    },
-    LineEdge {
-        end: bool,
-        extend: bool,
-    },
-    Copy {
-        cut: bool,
-    },
-    SelectAll,
-    DocumentEdge {
-        end: bool,
-        extend: bool,
-    },
-    Undo,
-    Redo,
-}
+mod pointer;
+mod queue;
+mod session;
+use queue::Operation;
+use session::BlockSession;
 
 /// Owns one document, its native input surface and its derived block projection.
 pub struct LiveEditor {
     document: Document,
+    session: BlockSession,
+    frozen_selection: Option<Selection>,
+    pointer_refresh: Option<Task<()>>,
     options: Options,
     focus: FocusHandle,
     leaves: Vec<Leaf>,
     geometry: Rc<RefCell<HashMap<u64, LeafGeometry>>>,
+    accessible_runs: Rc<RefCell<crate::accessibility::TextRuns>>,
     pending: VecDeque<Operation>,
     worker: Option<Task<()>>,
     waiting_for_frame: bool,
@@ -150,10 +126,14 @@ impl LiveEditor {
         let source_text = document.snapshot().text().to_string().into();
         Self {
             document,
+            session: BlockSession::default(),
+            frozen_selection: None,
+            pointer_refresh: None,
             options,
             focus: cx.focus_handle().tab_stop(true),
             leaves,
             geometry: Rc::default(),
+            accessible_runs: Rc::default(),
             pending: VecDeque::new(),
             worker: None,
             waiting_for_frame: false,
@@ -203,7 +183,9 @@ impl LiveEditor {
     /// Queues active native preedit before a surface or focus transition.
     /// The caller waits for `is_pending()` to become false before reading its result.
     pub fn commit_composition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.keyboard_boundary();
         self.finish_composition(window, cx);
+        self.enqueue(Operation::CommitBlock, window, cx);
     }
 
     fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -220,19 +202,21 @@ impl LiveEditor {
         let old_source = self.leaves.get(top.item_ix).map(|leaf| leaf.raw.start);
         self.leaves = if let Some(composition) = &self.composition {
             projection::compose(
-                projection::project(
+                projection::project_draft(
                     &self.document.snapshot(),
                     selection(composition.range.start, composition.range.end),
                     self.projection_theme,
+                    self.session.pending(),
                 ),
                 composition.range.clone(),
                 &composition.text,
             )
         } else {
-            projection::project(
+            projection::project_draft(
                 &self.document.snapshot(),
-                self.document.selection(),
+                self.frozen_selection.unwrap_or(self.document.selection()),
                 self.projection_theme,
+                self.session.pending(),
             )
         };
         self.list.reset(self.leaves.len());
@@ -341,6 +325,7 @@ impl LiveEditor {
 
     /// Routes a business editing intent through the same serialized command queue as native input.
     pub fn dispatch(&mut self, intent: Intent, window: &mut Window, cx: &mut Context<Self>) {
+        self.keyboard_boundary();
         self.finish_composition(window, cx);
         self.enqueue(Operation::Intent(intent), window, cx);
     }
@@ -409,411 +394,6 @@ impl LiveEditor {
     pub fn redo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.finish_composition(window, cx);
         self.enqueue(Operation::Redo, window, cx);
-    }
-
-    fn enqueue(&mut self, operation: Operation, window: &mut Window, cx: &mut Context<Self>) {
-        self.reveal_caret = true;
-        self.pending.push_back(operation);
-        self.start_next(window, cx);
-    }
-
-    fn selection_operation(&self, selected: Selection) -> Operation {
-        Operation::Select(selected, self.document.snapshot().revision())
-    }
-
-    fn map_pending_selections(
-        &mut self,
-        before: moino_document::Revision,
-        edits: &[moino_document::Edit],
-    ) {
-        let after = self.document.snapshot().revision();
-        for operation in &mut self.pending {
-            if let Operation::Select(selected, revision) = operation
-                && *revision == before
-            {
-                *selected = selected.mapped(edits);
-                *revision = after;
-            }
-        }
-        if let Some(composition) = &mut self.composition
-            && composition.revision == before
-            && !composition.follows_pending
-        {
-            composition.range = selection(composition.range.start, composition.range.end)
-                .mapped(edits)
-                .range();
-            composition.revision = after;
-        }
-        if let Some(anchor) = &mut self.scroll_anchor {
-            anchor.source = Selection::cursor(anchor.source).mapped(edits).head().offset;
-        }
-    }
-
-    fn defer_visual_move(
-        &mut self,
-        operation: Operation,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.pending.push_front(operation);
-        self.yield_queue(window, cx);
-    }
-
-    fn yield_queue(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.waiting_for_frame {
-            return;
-        }
-        self.waiting_for_frame = true;
-        let editor = cx.entity().downgrade();
-        window.on_next_frame(move |window, cx| {
-            let _ = editor.update(cx, |editor, cx| {
-                editor.waiting_for_frame = false;
-                editor.start_next(window, cx);
-            }); // A closed surface has no queue target.
-        });
-        cx.notify();
-    }
-
-    fn start_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.worker.is_some() || self.waiting_for_frame {
-            return;
-        }
-        let batch = cx.background_executor().now();
-        while !self.pending.is_empty() {
-            if cx.background_executor().now().duration_since(batch)
-                >= std::time::Duration::from_millis(8)
-            {
-                self.yield_queue(window, cx);
-                return;
-            }
-            let operation = self.pending.pop_front().expect("queue is nonempty");
-            match operation {
-                Operation::DocumentEdge { end, extend } => {
-                    self.preferred_x = None;
-                    let head = if end {
-                        self.document.snapshot().text().len()
-                    } else {
-                        ScalarOffset::new(0)
-                    };
-                    let selected = selection(
-                        if extend {
-                            self.document.selection().anchor().offset
-                        } else {
-                            head
-                        },
-                        head,
-                    );
-                    if let Err(error) = self.document.set_selection(selected) {
-                        self.error = Some(error.code().into());
-                    }
-                    self.refresh(window, cx);
-                }
-                Operation::SelectAll => {
-                    if let Err(error) = self.document.set_selection(selection(
-                        ScalarOffset::new(0),
-                        self.document.snapshot().text().len(),
-                    )) {
-                        self.error = Some(error.code().into());
-                    }
-                    self.refresh(window, cx);
-                }
-                Operation::Copy { cut } => {
-                    self.document.break_history();
-                    let range = self.document.selection().range();
-                    if !range.is_empty()
-                        && let Ok(text) = self.document.snapshot().text().slice(range)
-                    {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                        if cut {
-                            self.pending
-                                .push_front(Operation::Intent(Intent::Paste(String::new())));
-                        }
-                    }
-                }
-                Operation::Vertical { forward, extend } => {
-                    let current = self.document.selection();
-                    if let Some(caret) = self.caret(current.head().offset) {
-                        let x = *self.preferred_x.get_or_insert(caret.left());
-                        let line_height = self
-                            .geometry
-                            .borrow()
-                            .values()
-                            .find(|geometry| geometry.bounds().contains(&caret.origin))
-                            .map_or(caret.size.height, LeafGeometry::line_height);
-                        let target = point(
-                            x,
-                            caret.top()
-                                + if forward {
-                                    line_height * 1.5
-                                } else {
-                                    -line_height * 0.5
-                                },
-                        );
-                        if let Some(head) = self.hit(target) {
-                            let selected = selection(
-                                if extend {
-                                    current.anchor().offset
-                                } else {
-                                    head
-                                },
-                                head,
-                            );
-                            if let Err(error) = self.document.set_selection(selected) {
-                                self.error = Some(error.code().into());
-                            }
-                            self.refresh(window, cx);
-                        }
-                    } else {
-                        self.defer_visual_move(Operation::Vertical { forward, extend }, window, cx);
-                        return;
-                    }
-                }
-                Operation::LineEdge { end, extend } => {
-                    self.preferred_x = None;
-                    let current = self.document.selection();
-                    if let Some(caret) = self.caret(current.head().offset) {
-                        let x = if end {
-                            self.list.viewport_bounds().right()
-                        } else {
-                            self.list.viewport_bounds().left()
-                        };
-                        if let Some(head) = self.hit(point(x, caret.top())) {
-                            if let Err(error) = self.document.set_selection(selection(
-                                if extend {
-                                    current.anchor().offset
-                                } else {
-                                    head
-                                },
-                                head,
-                            )) {
-                                self.error = Some(error.code().into());
-                            }
-                            self.refresh(window, cx);
-                        }
-                    } else {
-                        self.defer_visual_move(Operation::LineEdge { end, extend }, window, cx);
-                        return;
-                    }
-                }
-                Operation::Navigate { forward, extend } => {
-                    self.preferred_x = None;
-                    if let Some(selection) = self.horizontal_selection(forward, extend) {
-                        if let Err(error) = self.document.set_selection(selection) {
-                            self.error = Some(error.code().into());
-                        }
-                        self.refresh(window, cx);
-                    }
-                }
-                Operation::SelectAfterPending(selection) => {
-                    if let Err(error) = self.document.set_selection(selection) {
-                        self.error = Some(error.code().into());
-                    }
-                    self.refresh(window, cx);
-                }
-                Operation::Select(selection, revision) => {
-                    if revision != self.document.snapshot().revision() {
-                        self.error = Some("document.stale".into());
-                    } else if let Err(error) = self.document.set_selection(selection) {
-                        self.error = Some(error.code().into());
-                    }
-                    self.refresh(window, cx);
-                }
-                operation @ (Operation::Intent(_) | Operation::Source { .. }) => {
-                    self.preferred_x = None;
-                    if let Operation::Source {
-                        change: Some(change),
-                        origin: moino_document::Origin::Typing,
-                        ..
-                    } = &operation
-                        && change.start == change.old_end
-                        && let Ok(at) = self.document.snapshot().text().byte_to_scalar(change.start)
-                        && self.document.selection() != Selection::cursor(at)
-                        && let Err(error) = self.document.set_selection(Selection::cursor(at))
-                    {
-                        self.error = Some(error.code().into());
-                        continue;
-                    }
-                    let snapshot = self.document.snapshot();
-                    let selection = self.document.selection();
-                    let options = self.options.clone();
-                    let now = cx.background_executor().now().duration_since(self.started);
-                    let before = snapshot.revision();
-                    let base = snapshot.clone();
-                    self.worker = Some(cx.spawn_in(window, async move |this, cx| {
-                        let result = cx
-                            .background_spawn(async move {
-                                let (transaction, selection) = match operation {
-                                    Operation::Intent(intent) => {
-                                        let outcome = moino_editing::resolve(
-                                            &snapshot, selection, intent, &options,
-                                        )
-                                        .map_err(|error| error.code().to_owned())?;
-                                        (outcome.clone().into_transaction(), outcome.selection())
-                                    }
-                                    Operation::Source {
-                                        text,
-                                        selection,
-                                        change,
-                                        origin,
-                                    } => {
-                                        if options.is_read_only()
-                                            && snapshot.text().to_string() != text
-                                        {
-                                            return Err("editing.unavailable".to_owned());
-                                        }
-                                        (
-                                            super::source::transaction(
-                                                &snapshot, &text, selection, change, origin,
-                                            ),
-                                            selection,
-                                        )
-                                    }
-                                    _ => unreachable!("only edit operations reach derivation"),
-                                };
-                                let edits =
-                                    transaction.as_ref().map_or_else(Vec::new, |transaction| {
-                                        transaction.edits().to_vec()
-                                    });
-                                let prepared = transaction
-                                    .map(|transaction| {
-                                        transaction
-                                            .with_group(moino_document::HistoryGroup::new(1))
-                                            .prepare(&snapshot)
-                                    })
-                                    .transpose()
-                                    .map_err(|error| error.code().to_owned())?;
-                                Ok::<_, String>((prepared, selection, edits))
-                            })
-                            .await;
-                        let _ = this.update_in(cx, |this, window, cx| {
-                            this.worker = None;
-                            match result {
-                                Ok((Some(prepared), _, edits)) => {
-                                    this.remember_scroll_anchor();
-                                    if let Err(error) = this.document.commit_prepared(prepared, now)
-                                    {
-                                        this.error = Some(error.code().into());
-                                        this.pending.clear();
-                                    } else {
-                                        this.error = None;
-                                        this.map_pending_selections(before, &edits);
-                                    }
-                                }
-                                Ok((None, selection, _)) => {
-                                    if let Err(error) = this.document.set_selection(selection) {
-                                        this.error = Some(error.code().into());
-                                    }
-                                }
-                                Err(error) => {
-                                    if error == "model.invariant"
-                                        && this.document.protect_snapshot(&base)
-                                    {
-                                        this.pending.clear();
-                                    }
-                                    this.error = Some(error.into());
-                                }
-                            }
-                            this.refresh(window, cx);
-                            this.start_next(window, cx);
-                        }); // Closed surfaces discard outstanding derived work.
-                    }));
-                    return;
-                }
-                Operation::Undo | Operation::Redo => {
-                    if self.is_read_only() {
-                        self.error = Some("editing.unavailable".into());
-                        cx.notify();
-                        continue;
-                    }
-                    let request = if matches!(operation, Operation::Undo) {
-                        self.document.undo_request()
-                    } else {
-                        self.document.redo_request()
-                    };
-                    let Some(request) = request else {
-                        continue;
-                    };
-                    let base = request.snapshot().clone();
-                    self.worker = Some(cx.spawn_in(window, async move |this, cx| {
-                        let prepared = cx.background_spawn(async move { request.prepare() }).await;
-                        let _ = this.update_in(cx, |this, window, cx| {
-                            this.worker = None;
-                            this.remember_scroll_anchor();
-                            let mapped_anchor = prepared.as_ref().ok().and_then(|history| {
-                                this.scroll_anchor.as_ref().map(|anchor| {
-                                    history
-                                        .map_selection(Selection::cursor(anchor.source))
-                                        .head()
-                                        .offset
-                                })
-                            });
-                            let mapped = prepared.as_ref().ok().map(|history| {
-                                this.pending
-                                    .iter()
-                                    .map(|operation| match operation {
-                                        Operation::Select(selected, revision)
-                                            if *revision == base.revision() =>
-                                        {
-                                            Some(history.map_selection(*selected))
-                                        }
-                                        _ => None,
-                                    })
-                                    .collect::<Vec<_>>()
-                            });
-                            let composition = prepared.as_ref().ok().and_then(|history| {
-                                this.composition
-                                    .as_ref()
-                                    .filter(|composition| {
-                                        !composition.follows_pending
-                                            && composition.revision == base.revision()
-                                    })
-                                    .map(|composition| {
-                                        history.map_selection(selection(
-                                            composition.range.start,
-                                            composition.range.end,
-                                        ))
-                                    })
-                            });
-                            if let Err(error) =
-                                prepared.and_then(|prepared| this.document.apply_history(prepared))
-                            {
-                                if error == moino_document::DocumentError::Invariant
-                                    && this.document.protect_snapshot(&base)
-                                {
-                                    this.pending.clear();
-                                }
-                                this.error = Some(error.code().into());
-                            } else {
-                                this.error = None;
-                                if let Some(source) = mapped_anchor
-                                    && let Some(anchor) = &mut this.scroll_anchor
-                                {
-                                    anchor.source = source;
-                                }
-                                if let Some(mapped) = mapped {
-                                    let revision = this.document.snapshot().revision();
-                                    for (operation, selected) in this.pending.iter_mut().zip(mapped)
-                                    {
-                                        if let Some(selected) = selected {
-                                            *operation = Operation::Select(selected, revision);
-                                        }
-                                    }
-                                    if let Some(mapped) = composition
-                                        && let Some(composition) = &mut this.composition
-                                    {
-                                        composition.range = mapped.range();
-                                        composition.revision = revision;
-                                    }
-                                }
-                            }
-                            this.refresh(window, cx);
-                            this.start_next(window, cx);
-                        }); // A dropped owner has no history target.
-                    }));
-                    return;
-                }
-            }
-        }
     }
 
     fn finish_composition(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1060,7 +640,6 @@ impl LiveEditor {
                         div()
                             .w_full()
                             .relative()
-                            .when(leaf.heading_badge.is_some(), |this| this.pr_8())
                             .child(block)
                             .when(leaf.rule, |this| {
                                 this.child(
@@ -1079,7 +658,7 @@ impl LiveEditor {
                             div()
                                 .absolute()
                                 .top_1()
-                                .right(moino_theme::content_inset())
+                                .right_0()
                                 .text_xs()
                                 .text_color(cx.theme().muted_foreground)
                                 .when(level >= 3, |badge| {
@@ -1111,17 +690,46 @@ impl LiveEditor {
     fn horizontal_selection(&self, forward: bool, extend: bool) -> Option<Selection> {
         let current = self.document.selection();
         let text = self.document.snapshot();
+        let current_head = self.content_position(current.head().offset);
         let head = if !extend && !current.is_collapsed() {
-            Some(if forward {
+            Some(self.content_position(if forward {
                 current.range().end
             } else {
                 current.range().start
-            })
+            }))
         } else if forward {
-            text.text().next_grapheme(current.head().offset).ok()
+            text.text().next_grapheme(current_head).ok()
         } else {
-            text.text().previous_grapheme(current.head().offset).ok()
+            text.text().previous_grapheme(current_head).ok()
         };
+        let head = head.and_then(|mut at| {
+            loop {
+                let Some(leaf) = self
+                    .leaves
+                    .iter()
+                    .rev()
+                    .find(|leaf| leaf.raw.start <= at && at < leaf.raw.end)
+                else {
+                    return Some(self.content_position(at));
+                };
+                if leaf.contains_content(at) {
+                    return Some(at);
+                }
+                let boundary = leaf.content_position(at);
+                if (forward && at < boundary) || (!forward && at > boundary) {
+                    return Some(boundary);
+                }
+                let next = if forward {
+                    text.text().next_grapheme(at).ok()?
+                } else {
+                    text.text().previous_grapheme(at).ok()?
+                };
+                if next == at {
+                    return Some(boundary);
+                }
+                at = next;
+            }
+        });
         head.map(|head| {
             selection(
                 if extend {
@@ -1132,6 +740,15 @@ impl LiveEditor {
                 head,
             )
         })
+    }
+
+    fn content_position(&self, at: ScalarOffset) -> ScalarOffset {
+        self.leaves
+            .iter()
+            .rev()
+            .find(|leaf| leaf.raw.start <= at && at <= leaf.raw.end)
+            .or_else(|| self.leaves.iter().find(|leaf| at < leaf.raw.start))
+            .map_or(at, |leaf| leaf.content_position(at))
     }
 }
 

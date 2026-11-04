@@ -101,7 +101,7 @@ fn rejects_stale_overlapping_and_out_of_bounds_commits_atomically() {
 // Spec: docs/contracts/history.md#撤销单元
 fn merge_timeout_boundaries_and_output_baseline_are_independent() {
     let mut doc = document("");
-    for (index, tick) in [0, 1000, 2001].into_iter().enumerate() {
+    for (index, tick) in [0, 2999, 3000].into_iter().enumerate() {
         let tx = Transaction::new(&doc.snapshot(), Origin::Typing)
             .with_edit(Edit::new(p(index)..p(index), "x"))
             .with_group(HistoryGroup::new(1));
@@ -109,7 +109,8 @@ fn merge_timeout_boundaries_and_output_baseline_are_independent() {
     }
     doc.undo().expect("third input is separate");
     assert_eq!(doc.snapshot().text().to_string(), "xx");
-    doc.undo().expect("first two merge at exact threshold");
+    doc.undo()
+        .expect("first two merge before the fixed deadline");
     assert_eq!(doc.snapshot().text().to_string(), "");
     assert!(!doc.undo().expect("empty"));
     doc.redo().expect("redo");
@@ -132,6 +133,29 @@ fn merge_timeout_boundaries_and_output_baseline_are_independent() {
         "error.model.invariant"
     );
     assert!(!DocumentError::Invalid.is_retryable());
+}
+
+#[test]
+// Spec: docs/contracts/history.md#历史边界
+fn semantic_checkpoints_restore_history_identity_without_changing_text_or_dirty_state() {
+    let mut doc = document("## title");
+    let original = doc.snapshot().history_state();
+    let source = doc.snapshot().text().to_string();
+    let tx = Transaction::new(&doc.snapshot(), Origin::Command);
+    doc.commit(tx, Duration::ZERO).expect("semantic checkpoint");
+    let committed = doc.snapshot().history_state();
+    assert_ne!(original, committed);
+    assert_eq!(doc.snapshot().text().to_string(), source);
+    assert!(!doc.is_dirty());
+    assert_eq!(doc.snapshot().revision(), Revision::new(1));
+    doc.undo().expect("restore draft state");
+    assert_eq!(doc.snapshot().history_state(), original);
+    assert_eq!(doc.snapshot().revision(), Revision::new(2));
+    doc.redo().expect("restore committed state");
+    assert_eq!(doc.snapshot().history_state(), committed);
+    assert_eq!(doc.snapshot().revision(), Revision::new(3));
+    assert!(!doc.is_dirty());
+    assert!(doc.history_states().any(|state| state == original));
 }
 #[test]
 // Spec: docs/contracts/document-model.md#选择与映射

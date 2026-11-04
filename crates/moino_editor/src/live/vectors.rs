@@ -96,7 +96,9 @@ fn formal_editing_vectors_use_native_events_and_shared_actions(cx: &mut TestAppC
                     input.commit_text(&value, cx);
                 } else {
                     match action {
-                        "enter" | "tab" | "shift-tab" | "backspace" => window.press(action, cx),
+                        "enter" | "tab" | "shift-tab" | "backspace" | "delete" => {
+                            window.press(action, cx)
+                        }
                         "undo" => window.press("secondary-z", cx),
                         "redo" => window.press("secondary-shift-z", cx),
                         "inline.bold" => window.dispatch_action(Box::new(commands::Bold), cx),
@@ -136,7 +138,7 @@ fn formal_editing_vectors_use_native_events_and_shared_actions(cx: &mut TestAppC
         });
         count += 1;
     }
-    assert_eq!(count, 31);
+    assert_eq!(count, 38);
 }
 
 #[gpui_kit::test]

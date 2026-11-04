@@ -29,6 +29,10 @@ identity!(
 identity!(Revision, "Monotonically increasing content revision.");
 identity!(Epoch, "Generation of a loaded document.");
 identity!(
+    HistoryState,
+    "Stable editing state restored by undo and redo within one generation."
+);
+identity!(
     HistoryGroup,
     "Caller-owned merge key for a continuous typing operation."
 );
@@ -238,6 +242,7 @@ pub struct Snapshot {
     document: DocumentId,
     epoch: Epoch,
     revision: Revision,
+    history_state: HistoryState,
     text: TextBuffer,
     cst: Cst,
 }
@@ -253,6 +258,11 @@ impl Snapshot {
     /// Frozen content revision.
     pub const fn revision(&self) -> Revision {
         self.revision
+    }
+    /// Stable identity for editor state associated with this history position.
+    /// Unlike the revision, this identity is restored when history is replayed.
+    pub const fn history_state(&self) -> HistoryState {
+        self.history_state
     }
     /// Frozen authoritative text.
     pub fn text(&self) -> &TextBuffer {
@@ -322,6 +332,9 @@ impl Commit {
 }
 #[derive(Clone, Debug)]
 struct Unit {
+    before_state: HistoryState,
+    after_state: HistoryState,
+    inserting: bool,
     forward: Vec<Vec<Edit>>,
     inverse: Vec<Vec<Edit>>,
     before: Selection,
@@ -394,6 +407,9 @@ impl PreparedHistory {
     }
 }
 fn candidate_cst(cst: &Cst, text: &TextBuffer, edits: &[Edit]) -> Result<Cst, DocumentError> {
+    if edits.is_empty() {
+        return Ok(cst.clone());
+    }
     let changes: Vec<_> = edits
         .iter()
         .map(|edit| TextChange::new(edit.range(), ScalarOffset::new(edit.text.chars().count())))
@@ -430,6 +446,7 @@ impl Document {
                 document: id,
                 epoch,
                 revision: Revision(0),
+                history_state: HistoryState(0),
                 text,
                 cst,
             },
@@ -445,6 +462,16 @@ impl Document {
     /// Freezes text, syntax and identity for offline consumers.
     pub fn snapshot(&self) -> Snapshot {
         self.snapshot.clone()
+    }
+    /// History identities still reachable by undo/redo, including the current state.
+    /// Views use these keys to retain their own reversible editing state.
+    pub fn history_states(&self) -> impl Iterator<Item = HistoryState> + '_ {
+        std::iter::once(self.snapshot.history_state).chain(
+            self.undo
+                .iter()
+                .chain(&self.redo)
+                .flat_map(|unit| [unit.before_state, unit.after_state]),
+        )
     }
     /// Current logical selection.
     pub const fn selection(&self) -> Selection {
@@ -548,7 +575,12 @@ impl Document {
             .map_or(ScalarOffset::new(0)..ScalarOffset::new(0), |first| {
                 first.range.start..edits.last().expect("nonempty").range.end
             });
-        let group = if transaction.origin == Origin::Typing {
+        let inserting = edits.iter().all(|edit| edit.range.is_empty());
+        let deleting = edits.iter().all(|edit| edit.text.is_empty());
+        let group = if matches!(transaction.origin, Origin::Typing | Origin::Composition)
+            && before.is_collapsed()
+            && (inserting || deleting)
+        {
             transaction.group
         } else {
             None
@@ -558,12 +590,16 @@ impl Document {
             && self.undo.last().is_some_and(|unit| {
                 unit.group == group
                     && unit.direction == transaction.direction
+                    && unit.inserting == inserting
                     && unit.after == before
                     && tick
                         .checked_sub(unit.tick)
-                        .is_some_and(|elapsed| elapsed <= Duration::from_millis(1000))
+                        .is_some_and(|elapsed| elapsed < Duration::from_millis(3000))
             });
         let unit = Unit {
+            before_state: self.snapshot.history_state,
+            after_state: HistoryState(revision.0),
+            inserting,
             forward: vec![edits],
             inverse: vec![inverse.clone()],
             before,
@@ -577,7 +613,7 @@ impl Document {
             last.forward.extend(unit.forward);
             last.inverse.extend(unit.inverse);
             last.after = selection;
-            last.tick = tick;
+            last.after_state = unit.after_state;
         } else {
             self.undo.push(Arc::new(unit));
             if self.undo.len() > 1000 {
@@ -590,6 +626,7 @@ impl Document {
             text,
             cst,
             revision,
+            history_state: HistoryState(revision.0),
             ..self.snapshot.clone()
         };
         self.selection = selection;
@@ -653,6 +690,11 @@ impl Document {
         } else {
             request.unit.before
         };
+        let history_state = if request.redo {
+            request.unit.after_state
+        } else {
+            request.unit.before_state
+        };
         if request.redo {
             self.redo.pop();
             self.undo.push(request.unit);
@@ -664,6 +706,7 @@ impl Document {
             text,
             cst,
             revision,
+            history_state,
             ..self.snapshot.clone()
         };
         self.break_history();
