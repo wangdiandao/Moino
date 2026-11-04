@@ -136,6 +136,9 @@ pub(super) fn list_tab(
     reverse: bool,
 ) -> Option<Outcome> {
     let position = selection.head().offset.value();
+    if position == chars.len() && chars.last() == Some(&'\n') {
+        return None;
+    }
     let context = context(snapshot.cst().nodes(), position, chars.len(), None)?;
     if !reverse && context.previous.is_none() {
         return Some(navigation(selection));

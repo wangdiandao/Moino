@@ -61,6 +61,38 @@
     4. three
   description: 列表 Enter 与后续同级编号修改属于同一事务
 
+- name: eof-heading-format-targets-last-block
+  specs: [../../modules/editing.md#格式命令]
+  scenario: formatting-toggle
+  input: "a\n\nb█"
+  action: block.heading1
+  expected: "a\n\n# b█"
+  description: 文档末尾转换最后一段，保留第一段。
+
+- name: clear-setext-heading-format
+  specs: [../../modules/editing.md#格式命令]
+  scenario: formatting-toggle
+  input: "｢Title｣\n==="
+  action: edit.clearFormatting
+  expected: ｢Title｣
+  description: 清除 Setext 标题格式，保留正文和选择。
+
+- name: tab-after-list-terminating-newline
+  specs: [../../modules/editing.md#tab-与缩进]
+  scenario: tab-indentation
+  input: "- a\n- b\n█"
+  action: tab
+  expected: "- a\n- b\n    █"
+  description: 末尾空行按段落缩进，不改变上一列表项。
+
+- name: enter-at-unclosed-fence-eof
+  specs: [../../modules/editing.md#输入路由, ../../modules/editing.md#enter]
+  scenario: enter-splits-paragraph
+  input: "```\na█"
+  action: enter
+  expected: "```\na\n█"
+  description: 未闭合围栏的文档末尾仍为字面输入上下文。
+
 - name: clear-formatting-removes-block-and-inline-markers
   specs: [../../modules/editing.md#格式命令]
   scenario: formatting-toggle
@@ -144,3 +176,59 @@
   action: 'insert:"`"'
   expected: "```\n█\n```"
   description: 关闭自动配对不禁止行首第三个反引号的独立围栏转换。
+
+- name: heading-backspace-demotes-before-merging
+  specs: [../../modules/editing.md#backspace-与-delete]
+  scenario: backspace-merges-blocks
+  input: "para\n\n# █title"
+  action: backspace then backspace
+  expected: para█title
+  description: 第一次退格去除标题标记，第二次才在同一正文位置并入前段。
+
+- name: delete-merges-setext-body-without-underline
+  specs: [../../modules/editing.md#backspace-与-delete]
+  scenario: backspace-merges-blocks
+  input: "para█\n\nTitle\n===\n\nnext"
+  action: delete
+  expected: "para█Title\n\nnext"
+  description: 前向合并使用标题正文，移除 Setext 下划线并保留后续段落。
+
+- name: delete-preserves-receiving-heading-format
+  specs: [../../modules/editing.md#backspace-与-delete]
+  scenario: backspace-merges-blocks
+  input: "# title█ ###\n\nbody"
+  action: delete
+  expected: '# title█body ###'
+  description: 标题内容末尾删除把下一段正文插在闭合 ATX 标记之前。
+
+- name: enter-continues-list-from-soft-line
+  specs: [../../modules/editing.md#enter]
+  scenario: list-enter
+  input: "- first\n  second█"
+  action: enter
+  expected: "- first\n  second\n- █"
+  description: 从续行创建同级列表项，识别所属容器而非当前物理行前缀。
+
+- name: enter-keeps-ordinary-numbered-text
+  specs: [../../modules/editing.md#enter]
+  scenario: enter-splits-paragraph
+  input: "a\n2. item█"
+  action: enter
+  expected: "a\n2. item\n\n█"
+  description: 未被 CST 识别为列表的编号形似文本仍按普通段落拆分。
+
+- name: enter-quote-does-not-repeat-first-child-heading
+  specs: [../../modules/editing.md#enter]
+  scenario: list-enter
+  input: "> # H\n>\n> text█"
+  action: enter
+  expected: "> # H\n>\n> text\n> █"
+  description: 引用容器的续行只延续引用标记，不重复其首个子块的标题格式。
+
+- name: heading-command-preserves-numbered-paragraph-text
+  specs: [../../modules/editing.md#格式命令]
+  scenario: formatting-toggle
+  input: "a\n2. item█"
+  action: block.heading1
+  expected: '# a 2. item█'
+  description: 段落整体转标题时保留形似列表标记的普通正文。

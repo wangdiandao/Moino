@@ -45,5 +45,26 @@ fn main() -> Result<()> {
         pdf.warnings().is_empty(),
         "compiler warnings require review"
     );
+    let source = include_str!("../fixtures/widows-orphans.typ");
+    let start = Instant::now();
+    let pdf = moino_export::compile_prototype(source)?;
+    let elapsed = start.elapsed();
+    ensure!(
+        pdf.pages() == 4,
+        "widow/orphan fixture must span four pages"
+    );
+    ensure!(
+        pdf.warnings().is_empty(),
+        "pagination fixture warnings require review"
+    );
+    fs::write(directory.join("widows-orphans.typ"), source)?;
+    fs::write(directory.join("widows-orphans.pdf"), pdf.bytes())?;
+    fs::write(
+        directory.join("widows-orphans.json"),
+        serde_json::to_vec_pretty(&serde_json::json!({
+            "pages": pdf.pages(), "bytes": pdf.bytes().len(),
+            "compile_ms": elapsed.as_millis(), "warnings": pdf.warnings()
+        }))?,
+    )?;
     Ok(())
 }

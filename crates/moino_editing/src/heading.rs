@@ -4,19 +4,6 @@ use moino_document::{Origin, Selection, Snapshot};
 use moino_markdown::{Node, Syntax};
 use moino_text::{ByteOffset, ScalarOffset};
 
-pub(super) fn at_start(nodes: &[Node], position: ScalarOffset) -> Option<&Node> {
-    for node in nodes {
-        if node.raw().start <= position && position <= node.raw().end {
-            if let Some(heading) = at_start(node.children(), position) {
-                return Some(heading);
-            }
-            if matches!(node.syntax(), Syntax::Heading(_)) && node.content().start == position {
-                return Some(node);
-            }
-        }
-    }
-    None
-}
 fn at<'a>(nodes: &'a [Node], position: ScalarOffset, chars: &[char]) -> Option<&'a Node> {
     for node in nodes {
         let raw = node.raw();
@@ -34,7 +21,7 @@ fn at<'a>(nodes: &'a [Node], position: ScalarOffset, chars: &[char]) -> Option<&
     }
     None
 }
-fn continuation(prefix: &str) -> String {
+pub(super) fn continuation(prefix: &str) -> String {
     let mut continuation = String::new();
     let mut cursor = ByteOffset::new(0);
     while cursor.value() < prefix.len() {
@@ -122,12 +109,27 @@ pub(super) fn enter(snapshot: &Snapshot, selection: Selection, chars: &[char]) -
         .collect();
     let marker = closing.trim_end_matches('\n');
     let trailing: String = closing[marker.len()..].to_owned();
-    let value = format!("{marker}{separator}{tail}{trailing}");
+    let opening: String = chars[heading.raw().start.value()..content.start.value()]
+        .iter()
+        .collect();
+    let next = if tail.is_empty() {
+        String::new()
+    } else {
+        format!("{opening}{tail}{marker}")
+    };
+    let value = format!("{marker}{separator}{next}{trailing}");
     Some(replacement(
         snapshot,
         start..heading.raw().end,
         &value,
-        start.value() + marker.chars().count() + separator.chars().count(),
+        start.value()
+            + marker.chars().count()
+            + separator.chars().count()
+            + if tail.is_empty() {
+                0
+            } else {
+                opening.chars().count()
+            },
         Origin::Command,
     ))
 }

@@ -351,3 +351,48 @@ fn emitted_pdf_preserves_cjk_search_text_embedded_fonts_bookmarks_and_repeated_t
     }
     assert_eq!(titles, ["Moino", "Repeated table header"]);
 }
+
+#[test]
+// Spec: docs/acceptance/m0.md#技术原型
+fn emitted_pdf_prevents_orphan_and_widow_lines_at_real_page_boundaries() {
+    let source = include_str!("../../moino_export/fixtures/widows-orphans.typ");
+    for (disabled, expected) in [
+        (
+            false,
+            [
+                "OrphanSpacer",
+                "OrphanOneOrphanTwoOrphanThreeOrphanFour",
+                "WidowSpacerWidowOneWidowTwo",
+                "WidowThreeWidowFour",
+            ],
+        ),
+        (
+            true,
+            [
+                "OrphanSpacerOrphanOne",
+                "OrphanTwoOrphanThreeOrphanFour",
+                "WidowSpacerWidowOneWidowTwoWidowThree",
+                "WidowFour",
+            ],
+        ),
+    ] {
+        let markup = if disabled {
+            format!("#set text(costs: (orphan: 0%, widow: 0%))\n{source}")
+        } else {
+            source.to_owned()
+        };
+        let compiled = moino_export::compile_prototype(&markup).expect("pagination fixture");
+        assert!(compiled.warnings().is_empty(), "{:?}", compiled.warnings());
+        let pdf = Pdf::new(compiled.bytes().to_vec()).expect("emitted pagination PDF");
+        let decoded = page_text(&pdf);
+        let pages = decoded
+            .iter()
+            .map(|page| page.text.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            pages, expected,
+            "widow/orphan prevention disabled: {disabled}"
+        );
+        assert!(decoded.iter().all(|page| page.missing.is_empty()));
+    }
+}

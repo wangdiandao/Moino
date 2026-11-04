@@ -42,7 +42,11 @@ fn assert_single_undo(
         &Options::new("    ", pair).expect("options"),
     )
     .expect("resolve");
-    assert_eq!(outcome.selection().head().offset.value(), next);
+    assert_eq!(
+        outcome.selection().head().offset.value(),
+        next,
+        "{source:?}"
+    );
     document
         .commit(outcome.into_transaction().expect("edit"), Duration::ZERO)
         .expect("commit");
@@ -57,33 +61,144 @@ fn assert_single_undo(
     assert_eq!(document.selection().head().offset.value(), next);
 }
 #[test]
+// Spec: docs/modules/editing.md#输入路由
+fn unclosed_literal_block_eof_keeps_literal_input_and_single_newlines() {
+    for source in [
+        "```\n中😀",
+        "~~~\n中😀",
+        "```\n中😀\n",
+        "    中😀",
+        "<!-- 中😀",
+        "> ```\n> 中😀",
+        "- ```\n  中😀",
+    ] {
+        let caret = source.chars().count();
+        for (intent, suffix) in [(Intent::Insert("(".into()), "("), (Intent::Enter, "\n")] {
+            assert_single_undo(
+                source,
+                caret,
+                intent,
+                true,
+                &format!("{source}{suffix}"),
+                caret + 1,
+            );
+        }
+    }
+    for source in ["```\n中😀\n```", "`中😀`"] {
+        let caret = source.chars().count();
+        assert_single_undo(
+            source,
+            caret,
+            Intent::Insert("(".into()),
+            true,
+            &format!("{source}()"),
+            caret + 1,
+        );
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#tab-与缩进
+fn tab_on_a_trailing_empty_line_does_not_reindent_the_previous_list_item() {
+    for source in ["- a\n- b\n", "1. a\n2. b\n"] {
+        let caret = source.chars().count();
+        assert_single_undo(
+            source,
+            caret,
+            Intent::Tab { reverse: false },
+            false,
+            &format!("{source}    "),
+            caret + 4,
+        );
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#格式命令
+fn block_format_at_eof_targets_the_last_block_or_new_trailing_paragraph() {
+    for (source, expected, caret) in [
+        ("a\n\nb", "a\n\n## b", 7),
+        ("a\n\n", "a\n\n## ", 6),
+        ("# a\n", "# a\n## ", 7),
+    ] {
+        let end = source.chars().count();
+        assert_single_undo(
+            source,
+            end,
+            Intent::Block(BlockFormat::Heading(2)),
+            false,
+            expected,
+            caret,
+        );
+    }
+    for (format, prefix) in [
+        (BlockFormat::Heading(1), "# "),
+        (BlockFormat::Heading(6), "###### "),
+        (BlockFormat::Quote, "> "),
+        (BlockFormat::BulletList, "- "),
+        (BlockFormat::OrderedList, "1. "),
+        (BlockFormat::TaskList, "- [ ] "),
+    ] {
+        assert_single_undo(
+            "a\n\nb",
+            4,
+            Intent::Block(format),
+            false,
+            &format!("a\n\n{prefix}b"),
+            4 + prefix.chars().count(),
+        );
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#格式命令
+fn clearing_setext_heading_format_restores_a_paragraph_without_losing_following_blocks() {
+    for source in ["Title\n===", "Title\n---\n\nbody"] {
+        let (text, caret) = run(source, 0, 5, Intent::ClearFormatting, false);
+        assert_eq!(
+            text,
+            if source.ends_with("body") {
+                "Title\n\nbody"
+            } else {
+                "Title"
+            }
+        );
+        assert_eq!(caret, 5);
+    }
+}
+#[test]
 // Spec: docs/modules/editing.md#enter
 fn heading_enter_uses_cst_markers_and_keeps_outer_containers() {
     for (source, caret, expected, next) in [
         ("#", 1, "#\n\n", 3),
         ("# ", 2, "# \n\n", 4),
         ("#\ttitle", 2, "\n\n#\ttitle", 4),
-        ("#\ttitle", 4, "#\tti\n\ntle", 6),
+        ("#\ttitle", 4, "#\tti\n\n#\ttle", 8),
         ("Title\n===\n", 0, "\n\nTitle\n===\n", 2),
-        ("Title\n===\n", 2, "Ti\n===\n\ntle\n", 8),
+        ("Title\n===\n", 2, "Ti\n===\n\ntle\n===\n", 8),
         ("Title\n===\n", 5, "Title\n===\n\n\n", 11),
-        ("> # title", 6, "> # ti\n> tle", 9),
-        ("- # title", 6, "- # ti\n  tle", 9),
-        ("10. # title", 8, "10. # ti\n    tle", 13),
-        ("-\t# title", 6, "-\t# ti\n \ttle", 9),
-        ("1.\t# title", 7, "1.\t# ti\n  \ttle", 11),
-        ("> - # title", 8, "> - # ti\n>   tle", 13),
-        ("- > # title", 8, "- > # ti\n  > tle", 13),
-        ("- [x] Title\n  ===", 8, "- [x] Ti\n  ===\n  tle", 17),
-        ("- [x]\tTitle\n  ===", 8, "- [x]\tTi\n  ===\n  tle", 17),
+        ("> # title", 6, "> # ti\n> # tle", 11),
+        ("- # title", 6, "- # ti\n  # tle", 11),
+        ("10. # title", 8, "10. # ti\n    # tle", 15),
+        ("-\t# title", 6, "-\t# ti\n \t# tle", 11),
+        ("1.\t# title", 7, "1.\t# ti\n  \t# tle", 13),
+        ("> - # title", 8, "> - # ti\n>   # tle", 15),
+        ("- > # title", 8, "- > # ti\n  > # tle", 15),
+        ("- [x] Title\n  ===", 8, "- [x] Ti\n  ===\n  tle\n  ===", 17),
+        (
+            "- [x]\tTitle\n  ===",
+            8,
+            "- [x]\tTi\n  ===\n  tle\n  ===",
+            17,
+        ),
     ] {
         assert_single_undo(source, caret, Intent::Enter, false, expected, next);
     }
     for (source, anchor, head, expected, next) in [
-        ("# title", 5, 3, "# t\n\nle", 5),
-        ("Title\n===", 4, 1, "T\n===\n\ne", 7),
-        ("- # title", 7, 5, "- # t\n  le", 8),
-        ("> Title\n> ===", 6, 3, "> T\n> ===\n> e", 12),
+        ("# title", 5, 3, "# t\n\n# le", 7),
+        ("Title\n===", 4, 1, "T\n===\n\ne\n===", 7),
+        ("- # title", 7, 5, "- # t\n  # le", 10),
+        ("> Title\n> ===", 6, 3, "> T\n> ===\n> e\n> ===", 12),
     ] {
         let mut document = Document::new(DocumentId::new(1), Epoch::new(0), source);
         let selected = Selection::new(
@@ -269,7 +384,11 @@ fn indentation_and_block_formats_toggle() {
                 false
             )
             .0,
-            "text"
+            if matches!(format, BlockFormat::Heading(_)) {
+                "text"
+            } else {
+                &source
+            }
         );
     }
 }
@@ -599,4 +718,245 @@ fn heading_backspace_preserves_outer_containers_and_handles_setext_at_document_s
         run("Title\n===\n", 0, 0, Intent::Backspace, false),
         ("Title\n".to_owned(), 0)
     );
+}
+
+#[test]
+// Spec: docs/modules/editing.md#backspace-与-delete
+fn block_merging_uses_semantic_content_and_preserves_the_receiving_heading() {
+    for (source, caret, intent, expected, next) in [
+        ("para\n\n# title", 8, Intent::Backspace, "para\n\ntitle", 6),
+        (
+            "para\n\nTitle\n===",
+            6,
+            Intent::Backspace,
+            "para\n\nTitle",
+            6,
+        ),
+        ("para\n\ntitle", 6, Intent::Backspace, "paratitle", 4),
+        (
+            "para\n\nTitle\n===\n\nnext",
+            4,
+            Intent::Delete,
+            "paraTitle\n\nnext",
+            4,
+        ),
+        (
+            "# title ###\n\nbody",
+            7,
+            Intent::Delete,
+            "# titlebody ###",
+            7,
+        ),
+        ("Title\n===\n\nbody", 5, Intent::Delete, "Titlebody\n===", 5),
+        (
+            "Title\n===\n\nbody",
+            11,
+            Intent::Backspace,
+            "Titlebody\n===",
+            5,
+        ),
+        (
+            "Title\n===\n\nbody\nmore",
+            5,
+            Intent::Delete,
+            "Titlebody more\n===",
+            5,
+        ),
+        ("> a\n>\n> b\n> c", 3, Intent::Delete, "> ab\n> c", 3),
+        ("a\n2. item", 1, Intent::Delete, "a2. item", 1),
+        ("a\n2. item", 2, Intent::Backspace, "a2. item", 1),
+    ] {
+        assert_single_undo(source, caret, intent, false, expected, next);
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#enter
+fn enter_follows_the_list_or_quote_container_on_continuation_lines() {
+    for (source, caret, expected, next) in [
+        ("- first\n  second", 16, "- first\n  second\n- ", 19),
+        ("- first\nsecond", 14, "- first\nsecond\n- ", 17),
+        ("9. first\n   second", 18, "9. first\n   second\n10. ", 23),
+        ("> first\nsecond", 14, "> first\nsecond\n> ", 17),
+        (
+            "> - first\n>   second",
+            20,
+            "> - first\n>   second\n> - ",
+            25,
+        ),
+        ("- first\n  sec中文ond", 13, "- first\n  sec\n- 中文ond", 16),
+        ("a\n2. item", 9, "a\n2. item\n\n", 11),
+    ] {
+        assert_single_undo(source, caret, Intent::Enter, false, expected, next);
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#格式命令
+fn block_conversion_preserves_marker_shaped_paragraph_text() {
+    for (source, expected) in [
+        ("a\n2. item", "# a 2. item"),
+        ("a\n2) 中😀", "# a 2) 中😀"),
+        ("> a\n> 2. item", "> # a 2. item"),
+        ("- a\n  2. item", "- # a 2. item"),
+        ("a\n&amp; **中**", "# a &amp; **中**"),
+    ] {
+        assert_single_undo(
+            source,
+            source.chars().count(),
+            Intent::Block(BlockFormat::Heading(1)),
+            false,
+            expected,
+            expected.chars().count(),
+        );
+    }
+    for source in ["a\n2. item", "```\n- item\n```", "`- item`"] {
+        assert_eq!(
+            run(
+                source,
+                0,
+                source.chars().count(),
+                Intent::ClearFormatting,
+                false
+            )
+            .0,
+            if source == "`- item`" {
+                "- item"
+            } else {
+                source
+            }
+        );
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#enter
+fn container_continuation_uses_only_its_own_markers() {
+    for (source, suffix) in [
+        ("> # H\n>\n> text", "\n> "),
+        ("> - item\n>\n> paragraph", "\n> "),
+        ("> > inner\n>\n> outer", "\n> "),
+        ("- > quote", "\n  > "),
+        ("- - inner", "\n  - "),
+        ("> - > quote", "\n>   > "),
+        ("-\titem", "\n-\t"),
+        ("9.\titem", "\n10.\t"),
+        ("-\t[x]\titem", "\n-\t[ ]\t"),
+    ] {
+        let end = source.chars().count();
+        assert_single_undo(
+            source,
+            end,
+            Intent::Enter,
+            false,
+            &format!("{source}{suffix}"),
+            end + suffix.chars().count(),
+        );
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#enter
+fn leaving_an_empty_inner_container_preserves_outer_containers() {
+    for (source, expected) in [
+        ("- > ", "- "),
+        ("- - ", "- "),
+        ("> > ", "> "),
+        ("- > text\n  > ", "- > text\n  "),
+        ("> - > text\n>   > ", "> - > text\n>   "),
+    ] {
+        assert_single_undo(
+            source,
+            source.chars().count(),
+            Intent::Enter,
+            false,
+            expected,
+            expected.chars().count(),
+        );
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#enter
+fn selected_list_splits_renumber_only_actual_siblings_and_undo_direction() {
+    let source = "1. one\n2. two\n   1. child\n3. three";
+    for (anchor, head) in [(4, 6), (6, 4)] {
+        let mut document = Document::new(DocumentId::new(1), Epoch::new(0), source);
+        let selected = Selection::new(
+            Endpoint {
+                offset: ScalarOffset::new(anchor),
+                affinity: Affinity::After,
+            },
+            Endpoint {
+                offset: ScalarOffset::new(head),
+                affinity: Affinity::After,
+            },
+        );
+        document.set_selection(selected).expect("selection");
+        let outcome = resolve(
+            &document.snapshot(),
+            selected,
+            Intent::Enter,
+            &Options::new("    ", false).expect("options"),
+        )
+        .expect("split");
+        document
+            .commit(
+                outcome.into_transaction().expect("transaction"),
+                Duration::ZERO,
+            )
+            .expect("commit");
+        let expected = "1. o\n2. \n3. two\n   1. child\n4. three";
+        assert_eq!(document.snapshot().text().to_string(), expected);
+        assert_eq!(document.selection().head().offset.value(), 8);
+        document.undo().expect("undo");
+        assert_eq!(document.snapshot().text().to_string(), source);
+        assert_eq!(document.selection(), selected);
+        document.redo().expect("redo");
+        assert_eq!(document.snapshot().text().to_string(), expected);
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#格式命令
+fn inline_toggle_removes_the_actual_cst_delimiters() {
+    for (source, start, end, format, expected, caret) in [
+        ("__word__", 2, 6, InlineFormat::Bold, "word", 4),
+        ("_word_", 1, 5, InlineFormat::Italic, "word", 4),
+        ("``a`b``", 2, 5, InlineFormat::Code, "a`b", 3),
+        ("__word__", 0, 8, InlineFormat::Bold, "word", 4),
+        ("**_word_**", 3, 7, InlineFormat::Italic, "**word**", 6),
+    ] {
+        assert_eq!(
+            run(source, start, end, Intent::Inline(format), false),
+            (expected.into(), caret)
+        );
+    }
+}
+
+#[test]
+// Spec: docs/modules/editing.md#enter
+fn renumbering_moves_continuation_blocks_with_marker_width() {
+    for (source, caret, expected, next) in [
+        (
+            "8. a\n9. b\n   ```\n   code\n   ```",
+            4,
+            "8. a\n9. \n10. b\n    ```\n    code\n    ```",
+            8,
+        ),
+        (
+            "9. ab\n   ```\n   code\n   ```",
+            4,
+            "9. a\n10. b\n    ```\n    code\n    ```",
+            9,
+        ),
+        (
+            "> 8. a\n> 9. b\n>    > quote",
+            6,
+            "> 8. a\n> 9. \n> 10. b\n>     > quote",
+            12,
+        ),
+    ] {
+        assert_single_undo(source, caret, Intent::Enter, false, expected, next);
+    }
 }

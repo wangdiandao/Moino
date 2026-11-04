@@ -118,7 +118,7 @@ impl EditorWorkspace {
                     && let Some(mode) = this.requested_mode.take()
                     && mode != this.is_source
                 {
-                    this.toggle_source(&ToggleSource, window, cx);
+                    this.apply_source_mode(mode, window, cx);
                 }
                 cx.notify();
             }),
@@ -139,20 +139,32 @@ impl EditorWorkspace {
         }
     }
     fn toggle_source(&mut self, _: &ToggleSource, window: &mut Window, cx: &mut Context<Self>) {
-        if self.editor.read(cx).is_pending() {
-            self.requested_mode = Some(!self.requested_mode.unwrap_or(self.is_source));
-            cx.notify();
-            return;
-        }
+        let target = !self.requested_mode.unwrap_or(self.is_source);
         if self.is_source {
             self.source
                 .update(cx, |source, cx| source.leave(window, cx));
+        }
+        self.editor
+            .update(cx, |editor, cx| editor.commit_composition(window, cx));
+        if self.editor.read(cx).is_pending() {
+            self.requested_mode = Some(target);
+            cx.notify();
+            return;
+        }
+        self.requested_mode = None;
+        self.apply_source_mode(target, window, cx);
+    }
+    fn apply_source_mode(&mut self, target: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if target == self.is_source {
+            return;
+        }
+        if !target {
             window.focus(&self.editor.read(cx).focus_handle(), cx);
         } else {
             self.source
                 .update(cx, |source, cx| source.focus(window, cx));
         }
-        self.is_source = !self.is_source;
+        self.is_source = target;
         cx.notify();
     }
     fn toggle_appearance(&mut self, _: &ToggleAppearance, _: &mut Window, cx: &mut Context<Self>) {
@@ -318,6 +330,145 @@ mod tests {
     use gpui_kit::{AppContext, TestAppContext};
 
     #[gpui_kit::test]
+    // Spec: docs/modules/view-modes.md#源码模式
+    fn leaving_source_waits_for_composition_and_input_during_repeated_toggles(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui_kit::ElementInputHandler;
+        use gpui_kit::test::TestInput;
+        cx.update(init);
+        let (handle, workspace) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| EditorWorkspace::new(window, cx))
+            })
+            .expect("workspace")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click("toggle-source", cx);
+        })
+        .expect("enter source");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let source = workspace.read(cx).source.clone();
+            let bounds = window.find("source-surface").bounds();
+            TestInput::new(ElementInputHandler::new(bounds, source), window).compose_text(
+                None,
+                "中😀",
+                Some(3..3),
+                cx,
+            );
+            for _ in 0..3 {
+                window.click("toggle-source", cx);
+            }
+            assert!(workspace.read(cx).is_source);
+            window.input("X", cx);
+        })
+        .expect("continue typing during the source barrier");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let workspace = workspace.read(cx);
+            assert!(!workspace.is_source);
+            assert_eq!(
+                workspace.editor.read(cx).snapshot().text().to_string(),
+                "中😀X"
+            );
+            assert_eq!(
+                workspace.editor.read(cx).selection().head().offset.value(),
+                3
+            );
+        });
+        for expected in ["中😀", ""] {
+            cx.update_window(handle, |_, window, cx| window.press("secondary-z", cx))
+                .expect("undo in live mode");
+            cx.run_until_parked();
+            cx.update(|cx| {
+                assert_eq!(
+                    workspace
+                        .read(cx)
+                        .editor
+                        .read(cx)
+                        .snapshot()
+                        .text()
+                        .to_string(),
+                    expected
+                );
+            });
+        }
+    }
+
+    #[gpui_kit::test]
+    // Spec: docs/modules/editing.md#输入法组合
+    fn switching_to_source_waits_for_live_preedit_before_accepting_source_input(
+        cx: &mut TestAppContext,
+    ) {
+        use gpui_kit::ElementInputHandler;
+        use gpui_kit::test::TestInput;
+        cx.update(init);
+        let (handle, workspace) = cx.update(|cx| {
+            gpui_kit::open_window(Default::default(), cx, |window, cx| {
+                cx.new(|cx| EditorWorkspace::new(window, cx))
+            })
+            .expect("workspace")
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let editor = workspace.read(cx).editor.clone();
+            let bounds = window.find("document-editor").bounds();
+            let mut input = TestInput::new(ElementInputHandler::new(bounds, editor), window);
+            input.compose_text(None, "中", Some(1..1), cx);
+            for _ in 0..3 {
+                workspace.update(cx, |workspace, cx| {
+                    workspace.toggle_source(&super::ToggleSource, window, cx)
+                });
+            }
+            assert!(
+                !workspace.read(cx).is_source,
+                "a new source surface must not observe the pre-composition snapshot"
+            );
+        })
+        .expect("composition mode barrier");
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(workspace.read(cx).is_source);
+            window.input("X", cx);
+        })
+        .expect("source input after composition");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                workspace
+                    .read(cx)
+                    .editor
+                    .read(cx)
+                    .snapshot()
+                    .text()
+                    .to_string(),
+                "中X"
+            )
+        });
+        for expected in ["中", ""] {
+            cx.update_window(handle, |_, window, cx| window.press("secondary-z", cx))
+                .expect("shared undo");
+            cx.run_until_parked();
+            cx.update(|cx| {
+                assert_eq!(
+                    workspace
+                        .read(cx)
+                        .editor
+                        .read(cx)
+                        .snapshot()
+                        .text()
+                        .to_string(),
+                    expected
+                )
+            });
+        }
+    }
+
+    #[gpui_kit::test]
     // Spec: docs/modules/menus-dialogs.md
     fn menu_focus_waits_for_the_overlay_frame_before_traversal(cx: &mut TestAppContext) {
         if !moino_platform::has_window_menu() {
@@ -417,7 +568,7 @@ mod tests {
 
     #[gpui_kit::test]
     // Spec: docs/modules/selection.md#标记展开与折叠
-    fn source_roundtrip_reenters_heading_with_the_same_expanded_geometry(cx: &mut TestAppContext) {
+    fn source_roundtrip_keeps_heading_typography_and_hides_block_markers(cx: &mut TestAppContext) {
         cx.update(init);
         let (handle, workspace) = cx.update(|cx| {
             gpui_kit::open_window(Default::default(), cx, |window, cx| {
@@ -431,7 +582,7 @@ mod tests {
         })
         .expect("type heading");
         cx.run_until_parked();
-        let expanded = cx
+        let candidate_height = cx
             .update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
                 let document = workspace.read(cx).editor.read(cx).snapshot();
@@ -444,9 +595,9 @@ mod tests {
                 window.input("body", cx);
                 height
             })
-            .expect("measure expanded heading");
+            .expect("measure active candidate");
         cx.run_until_parked();
-        let revision = cx
+        let (revision, heading_height) = cx
             .update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
                 let document = workspace.read(cx).editor.read(cx).snapshot();
@@ -455,14 +606,41 @@ mod tests {
                     .bounds()
                     .size
                     .height;
-                assert!(folded > expanded);
+                assert!(folded > candidate_height);
+                let body = window
+                    .find(("leaf", document.cst().nodes()[1].id().value()))
+                    .bounds()
+                    .size
+                    .height;
+                assert!(folded > body);
                 window.click("toggle-source", cx);
+                // Publish the source action tree before dispatching keys to its focus target.
+                window.render_frame(cx);
                 window.press("secondary-home", cx);
-                document.revision()
+                let source = workspace.read(cx).source.clone();
+                let native = source
+                    .update(cx, |source, cx| {
+                        gpui_kit::EntityInputHandler::selected_text_range(source, false, window, cx)
+                    })
+                    .expect("source navigation selection");
+                assert_eq!(native.range, 0..0);
+                (document.revision(), folded)
             })
             .expect("fold and enter source");
         cx.run_until_parked();
         cx.update_window(handle, |_, window, cx| {
+            assert_eq!(
+                workspace
+                    .read(cx)
+                    .editor
+                    .read(cx)
+                    .selection()
+                    .head()
+                    .offset
+                    .value(),
+                0,
+                "owner synchronization must not overwrite the newly published source caret"
+            );
             window.click("toggle-source", cx);
         })
         .expect("return to live heading");
@@ -476,12 +654,30 @@ mod tests {
                 .bounds()
                 .size
                 .height;
-            assert!((restored - expanded).abs() <= gpui_kit::px(1.));
+            assert!((restored - heading_height).abs() <= gpui_kit::px(1.));
             assert_eq!(document.text().to_string(), "# Title\n\nbody");
             assert_eq!(document.revision(), revision);
             assert_eq!(editor.selection().head().offset.value(), 0);
         })
-        .expect("same heading expansion after source roundtrip");
+        .expect("same heading typography after source roundtrip");
+        cx.update_window(handle, |_, window, cx| {
+            window.press("home", cx);
+            window.input("X", cx);
+        })
+        .expect("type at rendered heading start");
+        cx.run_until_parked();
+        cx.update(|cx| {
+            assert_eq!(
+                workspace
+                    .read(cx)
+                    .editor
+                    .read(cx)
+                    .snapshot()
+                    .text()
+                    .to_string(),
+                "# XTitle\n\nbody"
+            );
+        });
     }
 
     #[gpui_kit::test]

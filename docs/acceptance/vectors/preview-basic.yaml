@@ -19,8 +19,8 @@
   scenario: marker-expansion
   input: '**a *中* z** end'
   action: right, right, right
-  expected: '**a 中 z** end'
-  description: 外层展开不强制展开未相交的内层语法。
+  expected: '**a *中* z** end'
+  description: 端点所在外层包裹展开时，其内部嵌套标记一起显示。
 
 - name: highlight-preview
   specs: [../../modules/selection.md#标记展开与折叠, ../../design/ink-theme.md#正文颜色]
@@ -46,18 +46,34 @@
   expected: "Title\n\nend"
   description: 移到末段后标题折叠，使用标题排版。
 
-- name: pending-heading-prefix-preview
+- name: loaded-loose-heading-preview
   specs: [../../modules/editing.md#交互语法转换]
   scenario: marker-expansion
   input: '##'
   action: secondary-end
-  expected: '##'
-  description: 当前文本末尾不充当输入分隔符，裸井号前缀保持普通文字。
+  expected: '#'
+  description: 已加载文本按默认宽松标题方言建立正式标题；键入候选生命周期由窗口输入测试覆盖。
 
 - name: reentered-heading-preview
   specs: [../../modules/selection.md#标记展开与折叠]
   scenario: marker-expansion
   input: "## Title\n\nend"
   action: secondary-end, secondary-home
-  expected: "## Title\n\nend"
-  description: 从末段回到标题后重新显示原始标记，正文几何由窗口回归验证。
+  expected: "Title\n\nend"
+  description: 从末段回到标题后继续隐藏井号，标题几何由窗口回归验证。
+
+- name: heading-terminating-newline-preview
+  specs: [../../modules/selection.md#标记展开与折叠]
+  scenario: marker-expansion
+  input: "## 123\n"
+  action: secondary-end
+  expected: "123\n"
+  description: 光标越过标题终止换行进入末尾空行后折叠井号。
+
+- name: rule-terminating-newline-preview
+  specs: [../../modules/selection.md#标记展开与折叠]
+  scenario: marker-expansion
+  input: "---\n"
+  action: secondary-end
+  expected: "\n"
+  description: 空行插入点不展开前一主题分隔线。

@@ -48,6 +48,14 @@ jobs:
           New-Item -ItemType Directory -Path $fixtureDirectory -Force | Out-Null
           Copy-Item -LiteralPath $fixturePath -Destination $fixtureDirectory
           Get-Item -LiteralPath (Join-Path $fixtureDirectory 'NotoSansCJKsc-Regular.otf') | Select-Object FullName, Length
+      - name: Linux CJK font provenance
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          mkdir -p target/m0
+          dpkg-query -W -f='${binary:Package} ${Version}\n' fonts-noto-cjk > target/m0/fonts-linux.txt
+          apt-cache policy fonts-noto-cjk >> target/m0/fonts-linux.txt
+          find /usr/share/fonts/opentype/noto -type f -exec sha256sum {} + >> target/m0/fonts-linux.txt
       - name: Toolchain
         shell: bash
         run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy

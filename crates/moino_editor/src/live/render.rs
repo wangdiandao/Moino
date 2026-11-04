@@ -11,8 +11,12 @@ impl Render for LiveEditor {
         if self.projection_theme != theme && self.composition.is_none() {
             self.remember_scroll_anchor();
             self.projection_theme = theme;
-            self.leaves =
-                projection::project(&self.document.snapshot(), self.document.selection(), theme);
+            self.leaves = projection::project_draft(
+                &self.document.snapshot(),
+                self.frozen_selection.unwrap_or(self.document.selection()),
+                theme,
+                self.session.pending(),
+            );
             self.list.remeasure_items(0..self.leaves.len());
         }
         let owner = cx.entity();
@@ -22,12 +26,72 @@ impl Render for LiveEditor {
         .size_full()
         .py(moino_theme::body_size() * 1.6);
         let source = self.source_text.clone();
+        let projected = crate::accessibility::ProjectedText::new(
+            &self.display_text(),
+            self.native_selection().unwrap_or(UTF16Selection {
+                range: 0..0,
+                reversed: false,
+            }),
+            &self.leaves,
+        );
+        let geometry = self.geometry.clone();
+        let runs = self.accessible_runs.clone();
+        let selection_owner = cx.entity();
+        let value_owner = cx.entity();
         let content = div()
             .id("document-editor")
             .test_support()
             .role(Role::MultilineTextInput)
             .aria_label("Document")
             .aria_value(source)
+            .a11y_synthetic_children(move |builder| {
+                *runs.borrow_mut() = projected.build(builder, &geometry.borrow());
+            })
+            .on_a11y_action(
+                accesskit::Action::SetTextSelection,
+                move |data, window, cx| {
+                    if let Some(accesskit::ActionData::SetTextSelection(selected)) = data {
+                        selection_owner.update(cx, |editor, cx| {
+                            let display = editor.display_text();
+                            let target = crate::accessibility::native_selection(
+                                &display.to_string(),
+                                selected,
+                                &editor.accessible_runs.borrow(),
+                            );
+                            if let Some((range, reversed)) = target
+                                && let Some(range) =
+                                    crate::native_input::native_range(&display, range)
+                            {
+                                editor.keyboard_boundary();
+                                editor.select(
+                                    if reversed {
+                                        selection(range.end, range.start)
+                                    } else {
+                                        selection(range.start, range.end)
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            }
+                        });
+                    }
+                },
+            )
+            .on_a11y_action(accesskit::Action::SetValue, move |data, window, cx| {
+                if let Some(accesskit::ActionData::Value(value)) = data {
+                    value_owner.update(cx, |editor, cx| {
+                        let text = TextBuffer::new(value);
+                        editor.keyboard_boundary();
+                        editor.finish_composition(window, cx);
+                        editor.replace_source(
+                            text.to_string(),
+                            Selection::cursor(text.len()),
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            })
             .track_focus(&self.focus)
             .key_context("MoinoEditor")
             .on_action(cx.listener(|this, _: &MoveToStart, window, cx| {
@@ -174,6 +238,7 @@ impl Render for LiveEditor {
                 }
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                this.keyboard_boundary();
                 match event.keystroke.key.as_str() {
                     "left" | "right" => this.move_horizontal(
                         event.keystroke.key == "right",
@@ -206,68 +271,15 @@ impl Render for LiveEditor {
                     _ => {}
                 }
             }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, event: &MouseDownEvent, window, cx| {
-                    this.drag_position = None;
-                    this.focus.focus(window, cx);
-                    if let Some(at) = this.hit(event.position) {
-                        if event.click_count >= 3 {
-                            if let Some(leaf) = this
-                                .leaves
-                                .iter()
-                                .find(|leaf| leaf.raw.start <= at && at <= leaf.raw.end)
-                            {
-                                this.select(selection(leaf.raw.start, leaf.raw.end), window, cx);
-                            }
-                            return;
-                        }
-                        if event.click_count == 2 {
-                            if let Some(range) = this
-                                .document
-                                .snapshot()
-                                .text()
-                                .words()
-                                .into_iter()
-                                .find(|range| range.start <= at && at < range.end)
-                            {
-                                this.select(selection(range.start, range.end), window, cx);
-                            }
-                            return;
-                        }
-                        let anchor = if event.modifiers.shift {
-                            this.document.selection().anchor().offset
-                        } else {
-                            at
-                        };
-                        this.select(selection(anchor, at), window, cx);
-                        this.drag_position = Some(event.position);
-                    }
-                }),
-            )
-            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
-                let Some(previous) = this.drag_position else {
-                    return;
-                };
-                if event.pressed_button != Some(MouseButton::Left) {
-                    this.drag_position = None;
-                    return;
-                }
-                if event.position == previous {
-                    return;
-                }
-                this.drag_position = Some(event.position);
-                if let Some(at) = this.hit(event.position) {
-                    this.select(
-                        selection(this.document.selection().anchor().offset, at),
-                        window,
-                        cx,
-                    );
-                }
-            }))
+            .on_mouse_down(MouseButton::Left, cx.listener(Self::pointer_down))
+            .on_mouse_move(cx.listener(Self::pointer_move))
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|this, _, _, _| this.drag_position = None),
+                cx.listener(|this, _, window, cx| this.pointer_up(window, cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.pointer_up(window, cx)),
             )
             .size_full()
             .relative()
