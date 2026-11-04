@@ -574,10 +574,9 @@ impl Cst {
                 .position(|node| node.raw.end.value() >= prefix)
                 .unwrap_or(self.nodes.len() - 1)
                 .saturating_sub(2);
-            while first > 0
-                && self.nodes[first].raw.start.value() > 0
-                && before[self.nodes[first].raw.start.value() - 1] != '\n'
-            {
+            // An old heading/container boundary need not remain a block boundary
+            // after this edit. Inline lookahead is local only across blank lines.
+            while first > 0 && !blank_line_boundary(&before, self.nodes[first].raw.start.value()) {
                 first -= 1;
             }
             let mut last = self
@@ -596,11 +595,8 @@ impl Cst {
                 let mut window =
                     Self::parse_mode(&TextBuffer::new(&fragment), start == 0, self.extensions);
                 let stable = last == self.nodes.len()
-                    || window.nodes.last().is_some_and(|node| {
-                        node.syntax == self.nodes[last - 1].syntax
-                            && window.text.slice(node.raw()).ok()
-                                == self.text.slice(self.nodes[last - 1].raw()).ok()
-                    });
+                    || (blank_line_boundary(&after, new_stop)
+                        && stable_suffix(&window, self, last));
                 if stable {
                     for node in Arc::make_mut(&mut window.nodes) {
                         relocate(node, 0, start);
@@ -641,6 +637,55 @@ impl Cst {
         );
         Some(parsed)
     }
+}
+
+fn blank_line_boundary(text: &[char], at: usize) -> bool {
+    if at == 0 {
+        return true;
+    }
+    if text.get(at - 1) != Some(&'\n') {
+        return false;
+    }
+    let start = text[..at - 1]
+        .iter()
+        .rposition(|ch| *ch == '\n')
+        .map_or(0, |index| index + 1);
+    text[start..at - 1]
+        .iter()
+        .all(|ch| matches!(ch, ' ' | '\t'))
+}
+
+fn stable_suffix(window: &Cst, old: &Cst, end: usize) -> bool {
+    for (node, previous) in window.nodes.iter().rev().zip(old.nodes[..end].iter().rev()) {
+        // Blank trivia is not itself a witness. Compare the preceding semantic
+        // block, including nested ownership; EOF can change a list item's range
+        // without changing the list's raw source or syntax.
+        if !same_block_shape(node, previous)
+            || window.text.slice(node.raw()).ok() != old.text.slice(previous.raw()).ok()
+        {
+            return false;
+        }
+        if node.syntax != Syntax::Trivia {
+            return true;
+        }
+    }
+    false
+}
+
+fn same_block_shape(left: &Node, right: &Node) -> bool {
+    let relative = |node: &Node, range: &Range<ScalarOffset>| {
+        (
+            range.start.value() - node.raw.start.value(),
+            range.end.value() - node.raw.start.value(),
+        )
+    };
+    left.syntax == right.syntax
+        && left.text == right.text
+        && relative(left, &left.content) == relative(right, &right.content)
+        && left.children.len() == right.children.len()
+        && left.children.iter().zip(&right.children).all(|(a, b)| {
+            relative(left, &a.raw) == relative(right, &b.raw) && same_block_shape(a, b)
+        })
 }
 
 fn definition_node(definition: &ReferenceDefinition) -> Node {
