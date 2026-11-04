@@ -6,7 +6,7 @@ use gpui_kit::{
     A11ySubtreeBuilder, UTF16Selection,
     accesskit::{Node, NodeId, Rect, Role, TextPosition, TextSelection},
 };
-use moino_text::TextBuffer;
+use moino_text::{ScalarOffset, TextBuffer};
 use std::{collections::HashMap, ops::Range};
 
 /// A published accessibility frame. Old text positions cannot target new text.
@@ -18,6 +18,7 @@ pub(super) struct TextRuns {
 
 struct VisibleText {
     key: u64,
+    geometry_key: Option<u64>,
     text: String,
     positions: Vec<usize>,
 }
@@ -31,31 +32,66 @@ pub(super) struct ProjectedText {
 
 impl ProjectedText {
     pub(super) fn new(text: &TextBuffer, selection: UTF16Selection, leaves: &[Leaf]) -> Self {
-        let leaves = leaves
-            .iter()
-            .filter_map(|leaf| {
-                let positions = leaf
-                    .text
-                    .char_indices()
-                    .map(|(byte, _)| byte)
-                    .chain(std::iter::once(leaf.text.len()))
-                    .map(|byte| {
-                        text.to_utf16(leaf.source(byte))
-                            .ok()
-                            .map(|offset| offset.value())
-                    })
-                    .collect::<Option<Vec<_>>>()?;
-                Some(VisibleText {
-                    key: leaf.key,
-                    text: leaf.text.clone(),
-                    positions,
+        let source: Vec<_> = text.to_string().chars().collect();
+        let mut visible = Vec::new();
+        for (index, leaf) in leaves.iter().enumerate() {
+            let positions = leaf
+                .text
+                .char_indices()
+                .map(|(byte, _)| byte)
+                .chain(std::iter::once(leaf.text.len()))
+                .map(|byte| {
+                    text.to_utf16(leaf.source(byte))
+                        .ok()
+                        .map(|offset| offset.value())
                 })
-            })
-            .collect();
+                .collect::<Option<Vec<_>>>();
+            let Some(positions) = positions else {
+                continue;
+            };
+            visible.push(VisibleText {
+                key: leaf.key,
+                geometry_key: Some(leaf.key),
+                text: leaf.text.clone(),
+                positions,
+            });
+
+            // AccessKit concatenates TextRun values without inserting paragraph
+            // separators. Publish only real source breaks omitted by projection;
+            // hidden marker lines (for example Setext underlines) stay hidden.
+            let end = leaves
+                .get(index + 1)
+                .map_or(text.len(), |next| next.raw.start)
+                .min(text.len());
+            let raw_end = leaf.raw.end.min(end);
+            let mut start = raw_end.value();
+            while start > leaf.raw.start.value() && source[start - 1].is_whitespace() {
+                start -= 1;
+            }
+            start = start.max(leaf.source(leaf.text.len()).value());
+            for (at, character) in source.iter().enumerate().take(end.value()).skip(start) {
+                if *character != '\n' {
+                    continue;
+                }
+                visible.push(VisibleText {
+                    key: leaf.key,
+                    geometry_key: None,
+                    text: "\n".into(),
+                    positions: vec![
+                        text.to_utf16(ScalarOffset::new(at))
+                            .expect("source break start")
+                            .value(),
+                        text.to_utf16(ScalarOffset::new(at + 1))
+                            .expect("source break end")
+                            .value(),
+                    ],
+                });
+            }
+        }
         Self {
             text: text.to_string(),
             selection,
-            leaves,
+            leaves: visible,
         }
     }
 
@@ -70,7 +106,7 @@ impl ProjectedText {
         };
         let mut ordered = Vec::new();
         for leaf in &self.leaves {
-            let geometry = geometry.get(&leaf.key);
+            let geometry = leaf.geometry_key.and_then(|key| geometry.get(&key));
             let lines = geometry.map_or_else(
                 || std::iter::once(0..leaf.text.len()).collect(),
                 |geometry| line_ranges(&leaf.text, geometry),
@@ -188,6 +224,7 @@ pub(super) fn build_runs(
         },
         leaves: vec![VisibleText {
             key: 1,
+            geometry_key: Some(1),
             text: text.to_owned(),
             positions,
         }],
@@ -219,6 +256,118 @@ pub(super) fn native_selection(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn projected(source: &str) -> ProjectedText {
+        let document = moino_document::Document::new(
+            moino_document::DocumentId::new(1),
+            moino_document::Epoch::new(0),
+            source,
+        );
+        let snapshot = document.snapshot();
+        let leaves = crate::projection::project(
+            &snapshot,
+            document.selection(),
+            moino_theme::BuiltinTheme::Paper,
+        );
+        ProjectedText::new(
+            snapshot.text(),
+            UTF16Selection {
+                range: 0..0,
+                reversed: false,
+            },
+            &leaves,
+        )
+    }
+
+    #[test]
+    // Spec: docs/acceptance/m0.md#真实系统检查
+    fn accessible_heading_and_paragraph_keep_source_breaks_and_unicode_positions() {
+        let source = "# 他\n\na👨‍👩‍👧‍👦";
+        let projected = projected(source);
+        let values: String = projected
+            .leaves
+            .iter()
+            .map(|run| run.text.as_str())
+            .collect();
+        assert_eq!(values, "他\n\na👨‍👩‍👧‍👦");
+        assert_eq!(projected.leaves[0].positions, vec![2, 3]);
+        let separators: Vec<_> = projected
+            .leaves
+            .iter()
+            .filter(|run| run.geometry_key.is_none())
+            .collect();
+        assert_eq!(separators.len(), 2);
+        assert_eq!(separators[0].positions, vec![3, 4]);
+        assert_eq!(separators[1].positions, vec![4, 5]);
+        assert!(separators.iter().all(|run| run.text == "\n"));
+
+        let runs = TextRuns {
+            text: source.into(),
+            positions: HashMap::from([
+                (NodeId(1), separators[0].positions.clone()),
+                (NodeId(2), separators[1].positions.clone()),
+            ]),
+        };
+        let backward = TextSelection {
+            anchor: TextPosition {
+                node: NodeId(2),
+                character_index: 1,
+            },
+            focus: TextPosition {
+                node: NodeId(1),
+                character_index: 0,
+            },
+        };
+        assert_eq!(
+            native_selection(source, &backward, &runs),
+            Some((3..5, true))
+        );
+        assert_eq!(
+            projected
+                .leaves
+                .last()
+                .expect("last paragraph")
+                .positions
+                .last()
+                .copied(),
+            Some(source.encode_utf16().count())
+        );
+    }
+
+    #[test]
+    // Spec: docs/acceptance/m0.md#真实系统检查
+    fn accessible_empty_leaves_and_multiple_blocks_do_not_duplicate_or_drop_breaks() {
+        for (source, expected) in [
+            ("", ""),
+            ("\n", "\n"),
+            ("\n\na", "\n\na"),
+            ("a\n\n", "a\n\n"),
+            ("a\n\nb\n\nc", "a\n\nb\n\nc"),
+            ("a\nb\n\nc", "a\nb\n\nc"),
+            ("Title\n===\n\nbody", "Title\n\nbody"),
+            ("# Title ###\n\nbody", "Title\n\nbody"),
+        ] {
+            let projected = projected(source);
+            let actual: String = projected
+                .leaves
+                .iter()
+                .map(|run| run.text.as_str())
+                .collect();
+            assert_eq!(actual, expected, "source: {source:?}");
+            let text = TextBuffer::new(source);
+            for run in projected
+                .leaves
+                .iter()
+                .filter(|run| run.geometry_key.is_none())
+            {
+                assert_eq!(run.positions.len(), 2);
+                let range = native_range(&text, run.positions[0]..run.positions[1])
+                    .expect("separator native range");
+                assert_eq!(text.slice(range).expect("separator source"), "\n");
+            }
+        }
+    }
+
     #[test]
     // Spec: docs/acceptance/m0.md#技术原型
     fn accessible_positions_preserve_direction_and_reject_stale_or_unknown_runs() {
